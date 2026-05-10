@@ -1,0 +1,292 @@
+{
+  "_comment": "Declarative fixture for the regression harness. Each ticket exercises ONE SLA code path. The generator script (build-fixture.js) turns this into tests/fixtures/input.xlsx, which is then fed to the engine. The list must cover every observable branch in excelProcessor.js so the golden snapshot is a meaningful contract for the Phase 1b split.",
+
+  "columns": [
+    "Number",
+    "Priority",
+    "Country",
+    "Caller",
+    "Email",
+    "Assigned to",
+    "Short description",
+    "Description",
+    "Created",
+    "Resolved",
+    "Additional content",
+    "Additional comments"
+  ],
+
+  "tickets": [
+    {
+      "_case": "P3 response fulfilled (analyst replied within 120 min from team-assignment, Central TZ), resolution fulfilled (<=480 min)",
+      "Number": "INC0001",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "Juan Perez",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Problema con VPN",
+      "Description": "El usuario reporta error al conectar Zscaler desde Outlook.",
+      "Created": "2025-01-10 08:00:00",
+      "Resolved": "2025-01-10 13:00:00",
+      "Additional content": "<p>10-01-2025 09:00:00</p><p>resto de historial</p>",
+      "Additional comments": "10-01-2025 10:30:00 - En proceso\nSiguiente paso: revisar VPN."
+    },
+
+    {
+      "_case": "P3 response unfulfilled (analyst replied AFTER 120 min), resolution unfulfilled (>480 min)",
+      "Number": "INC0002",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "Maria Lopez",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Impresora no responde",
+      "Description": "La impresora de red sigue colgada.",
+      "Created": "2025-01-10 08:00:00",
+      "Resolved": "2025-01-11 12:00:00",
+      "Additional content": "<p>10-01-2025 09:00:00</p>",
+      "Additional comments": "10-01-2025 11:30:00 - En proceso"
+    },
+
+    {
+      "_case": "P3 response 'Revisar manualmente' (no 'En proceso' comment) - third-state path, resolution still computed",
+      "Number": "INC0003",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "Carlos Ruiz",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "SAP lento",
+      "Description": "SAP se pone muy lento al abrir Excel.",
+      "Created": "2025-01-10 08:00:00",
+      "Resolved": "2025-01-10 14:00:00",
+      "Additional content": "<p>10-01-2025 09:00:00</p>",
+      "Additional comments": "Notas sin formato estandar. No hay marcador de proceso."
+    },
+
+    {
+      "_case": "P4 response fulfilled (<=180 min), resolution fulfilled (<=960 min)",
+      "Number": "INC0004",
+      "Priority": "4 - Low",
+      "Country": "BR",
+      "Caller": "Joao Silva",
+      "Email": "analyst.argentina@example.com",
+      "Assigned to": "Team Beta",
+      "Short description": "Outlook problema",
+      "Description": "Outlook no sincroniza con Teams.",
+      "Created": "2025-01-15 08:00:00",
+      "Resolved": "2025-01-15 20:00:00",
+      "Additional content": "<p>15-01-2025 09:00:00</p>",
+      "Additional comments": "15-01-2025 10:30:00 - En proceso"
+    },
+
+    {
+      "_case": "P4 response unfulfilled (>180 min), resolution unfulfilled (>960 min). Cross-TZ analyst (Argentina -> Central)",
+      "Number": "INC0005",
+      "Priority": "4 - Low",
+      "Country": "BR",
+      "Caller": "Pedro Alves",
+      "Email": "analyst.argentina@example.com",
+      "Assigned to": "Team Beta",
+      "Short description": "Sharepoint caido",
+      "Description": "Sharepoint inaccesible. Office y OneDrive tambien.",
+      "Created": "2025-01-15 08:00:00",
+      "Resolved": "2025-01-16 14:00:00",
+      "Additional content": "<p>15-01-2025 09:00:00</p>",
+      "Additional comments": "15-01-2025 13:00:00 - En proceso"
+    },
+
+    {
+      "_case": "VIP elevation - P3 ticket, caller name contains 'VIP ALPHA'. Response VIP fulfilled (<=30 min from team-assignment)",
+      "Number": "INC0006",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "VIP ALPHA (SHS AM LAM)",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Windows reinicio",
+      "Description": "Windows se reinicia solo tras actualizacion.",
+      "Created": "2025-01-20 08:00:00",
+      "Resolved": "2025-01-20 12:00:00",
+      "Additional content": "<p>20-01-2025 09:00:00</p>",
+      "Additional comments": "20-01-2025 09:25:00 - En proceso"
+    },
+
+    {
+      "_case": "VIP unfulfilled - response >30 min (violates VIP window)",
+      "Number": "INC0007",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "VIP BETA (SHS AM LAM)",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Teams no abre",
+      "Description": "Teams se queda cargando.",
+      "Created": "2025-01-20 08:00:00",
+      "Resolved": "2025-01-20 18:00:00",
+      "Additional content": "<p>20-01-2025 09:00:00</p>",
+      "Additional comments": "20-01-2025 10:00:00 - En proceso"
+    },
+
+    {
+      "_case": "VIP 'Revisar manualmente' - no 'En proceso' marker, VIP response branch set to 'Revisar manualmente'",
+      "Number": "INC0008",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "VIP ALPHA (SHS AM LAM DI)",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Certificados PKI",
+      "Description": "Error al firmar con certificados.",
+      "Created": "2025-01-20 08:00:00",
+      "Resolved": "2025-01-20 11:00:00",
+      "Additional content": "<p>20-01-2025 09:00:00</p>",
+      "Additional comments": "comentario libre sin formato"
+    },
+
+    {
+      "_case": "Warranty claim - 'A garantia' marker present and within 120 min -> fulfilled",
+      "Number": "INC0009",
+      "Priority": "3 - Moderate",
+      "Country": "BR",
+      "Caller": "Ana Souza",
+      "Email": "analyst.berlin@example.com",
+      "Assigned to": "Team Gamma",
+      "Short description": "Equipo roto",
+      "Description": "El celular corporativo no enciende.",
+      "Created": "2025-02-01 08:00:00",
+      "Resolved": "2025-02-01 15:00:00",
+      "Additional content": "<p>01-02-2025 09:00:00</p>",
+      "Additional comments": "01-02-2025 10:00:00 - En proceso\n01-02-2025 10:45:00 - A garantia"
+    },
+
+    {
+      "_case": "Warranty unfulfilled - claim >120 min after team-assignment",
+      "Number": "INC0010",
+      "Priority": "4 - Low",
+      "Country": "BR",
+      "Caller": "Luis Costa",
+      "Email": "analyst.berlin@example.com",
+      "Assigned to": "Team Gamma",
+      "Short description": "OneDrive lento",
+      "Description": "OneDrive no sincroniza.",
+      "Created": "2025-02-01 08:00:00",
+      "Resolved": "2025-02-01 18:00:00",
+      "Additional content": "<p>01-02-2025 09:00:00</p>",
+      "Additional comments": "01-02-2025 10:30:00 - En proceso\n01-02-2025 13:00:00 - Garantia"
+    },
+
+    {
+      "_case": "Excluded email - ticket must be dropped before any counter increment",
+      "Number": "INC0011",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "Should Not Appear",
+      "Email": "excluded.analyst@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "internet caido",
+      "Description": "No hay internet. Palabra clave que NO debe contarse.",
+      "Created": "2025-01-10 08:00:00",
+      "Resolved": "2025-01-10 09:00:00",
+      "Additional content": "<p>10-01-2025 09:00:00</p>",
+      "Additional comments": "10-01-2025 10:00:00 - En proceso"
+    },
+
+    {
+      "_case": "Country fallback via email - ticket.Country not in allowedCountries -> derive from emailCountries",
+      "Number": "INC0012",
+      "Priority": "3 - Moderate",
+      "Country": "ZZ",
+      "Caller": "Caller Unmapped",
+      "Email": "caller.mx@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Problema general",
+      "Description": "Red lenta.",
+      "Created": "2025-01-10 08:00:00",
+      "Resolved": "2025-01-10 14:00:00",
+      "Additional content": "<p>10-01-2025 09:00:00</p>",
+      "Additional comments": "10-01-2025 10:30:00 - En proceso"
+    },
+
+    {
+      "_case": "Country ghost bucket '#' - country not allowed AND email not in emailCountries",
+      "Number": "INC0013",
+      "Priority": "4 - Low",
+      "Country": "ZZ",
+      "Caller": "Anonymous Caller",
+      "Email": "unknown.caller@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Algo raro pasa",
+      "Description": "Word no guarda archivos.",
+      "Created": "2025-01-15 08:00:00",
+      "Resolved": "2025-01-15 14:00:00",
+      "Additional content": "<p>15-01-2025 09:00:00</p>",
+      "Additional comments": "15-01-2025 10:00:00 - En proceso"
+    },
+
+    {
+      "_case": "No HTML team-assignment - ticketMovedDate falls back to Created. Response measured from Created.",
+      "Number": "INC0014",
+      "Priority": "3 - Moderate",
+      "Country": "AR",
+      "Caller": "Roberto Gomez",
+      "Email": "analyst.argentina@example.com",
+      "Assigned to": "Team Beta",
+      "Short description": "Zscaler bloquea",
+      "Description": "Zscaler bloquea el acceso a una URL interna.",
+      "Created": "2025-01-25 08:00:00",
+      "Resolved": "2025-01-25 13:00:00",
+      "Additional content": "Sin historial HTML",
+      "Additional comments": "25-01-2025 09:30:00 - En proceso"
+    },
+
+    {
+      "_case": "Word match in Description only (shortDesc has no keyword) - 'hasAnyWordInShort' gate",
+      "Number": "INC0015",
+      "Priority": "4 - Low",
+      "Country": "CO",
+      "Caller": "Diana Rojas",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "Consulta general",
+      "Description": "La aplicacion SAP no conecta y el usuario tampoco tiene acceso a Sharepoint.",
+      "Created": "2025-02-05 08:00:00",
+      "Resolved": "2025-02-05 14:00:00",
+      "Additional content": "<p>05-02-2025 09:00:00</p>",
+      "Additional comments": "05-02-2025 10:00:00 - En proceso"
+    },
+
+    {
+      "_case": "Non-P3, non-P4 priority (e.g. '2 - High') - must NOT increment P3/P4 counters; resolution defaults to unfulfilled",
+      "Number": "INC0016",
+      "Priority": "2 - High",
+      "Country": "CL",
+      "Caller": "Paulo Aguirre",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "office error",
+      "Description": "Office 365 activacion fallida.",
+      "Created": "2025-02-10 08:00:00",
+      "Resolved": "2025-02-10 09:30:00",
+      "Additional content": "<p>10-02-2025 08:15:00</p>",
+      "Additional comments": "10-02-2025 08:45:00 - En proceso"
+    },
+
+    {
+      "_case": "Punctuation-tolerance regex stress test - separator is ';' between timestamp and 'En proceso'",
+      "Number": "INC0017",
+      "Priority": "3 - Moderate",
+      "Country": "MX",
+      "Caller": "Sofia Torres",
+      "Email": "analyst.central@example.com",
+      "Assigned to": "Team Alpha",
+      "Short description": "teams audio",
+      "Description": "Teams sin audio.",
+      "Created": "2025-02-12 08:00:00",
+      "Resolved": "2025-02-12 12:00:00",
+      "Additional content": "<p>12-02-2025 09:00:00</p>",
+      "Additional comments": "12-02-2025 10:00:00 ; En proceso"
+    }
+  ]
+}

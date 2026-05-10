@@ -9,6 +9,9 @@ npm-debug.log*
 uploads/
 *.tmp
 
+# Regression harness - regenerated from tests/fixtures/tickets.json
+tests/fixtures/input.xlsx
+
 # Editor / OS
 .DS_Store
 .idea/
