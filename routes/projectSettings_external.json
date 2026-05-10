@@ -1,0 +1,234 @@
+{
+  "excludedEmails": [
+    "l.albarranolmos@siemens-healthineers.com",
+    "william.alves@siemens-healthineers.com",
+    "jeysonoctavio.hernandezlatorre@siemens-healthineers.com",
+    "carlos.maltez@siemens-healthineers.com",
+    "julio.ribeiro@siemens-healthineers.com"
+  ],
+  "vipUsers": [
+    {
+      "name": "DANIEL OMAR Bellolio (SHS AM LAM ARG FI)"
+    },
+    {
+      "name": "ANDREA SILVINA BRAZ ARRAIS (SHS AM LAM HR)"
+    },
+    {
+      "name": "LEO PACHECO ZACKIEWICZ (SHS AM LAM FI ES)"
+    },
+    {
+      "name": "MARCELO VENDRAMIN (SHS CS ML AM OPC-LAM)"
+    },
+    {
+      "name": "ANTONIO CARLOS RIBEIRO (SHS AM LAM AT)"
+    },
+    {
+      "name": "JOSE AURELINO DE FRANCA FILHO (SHS AM LAM CS BM)"
+    },
+    {
+      "name": "SILVIO MARTINS BRAGA (SHS AM LAM DI BRA2)"
+    },
+    {
+      "name": "ARMANDO CORREA LOPES JUNIOR (SHS AM LAM DI)"
+    },
+    {
+      "name": "Renato Luiz Lehnert Portela CERVEIRA (SHS AM LAM CS)"
+    },
+    {
+      "name": "Georgios Papanikolaou (SHS AM LAM FI)"
+    },
+    {
+      "name": "PEDRO CARDOSO DE OLIVEIRA (SHS AM LAM FI AT)"
+    },
+    {
+      "name": "Paulo Pontes (SHS US C AM LAM)"
+    },
+    {
+      "name": "ISABEL TAIS BALTAR PAZOS (SHS AM LAM FI DI)"
+    },
+    {
+      "name": "Ivan Christo Franca (SHS AM LAM ES)"
+    },
+    {
+      "name": "Cesar Matadinho Alexandre (SHS DX CS-LS LAM)"
+    },
+    {
+      "name": "MARIO FONTENLA MERLIN (SHS AM LAM FI CS)"
+    },
+    {
+      "name": "Andre Machado (SHS IT AM BRM-LAM)"
+    },
+    {
+      "name": "Claudio Vieira De Souza (SHS AM LAM DI BRA1)"
+    },
+    {
+      "name": "Jaime Andre Valente Lage Atalaia (SHS DX C-LS LAM BRA)"
+    },
+    {
+      "name": "ADRIANA SILVA DA COSTA (SHS AM LAM BRA)"
+    },
+    {
+      "name": "ANA CRISTINA DE SOUZA PEREIRA REQUEJO (SHS DX C-LS LAM)"
+    },
+    {
+      "name": "LILIANA MARIA PEREZ MARQUES (SHS DX C-LS LAM MK)"
+    },
+    {
+      "name": "Guillermo Gabriel Fernandez (SHS AM LAM ST&BD)"
+    },
+    {
+      "name": "Karina Goncalves Dallaqua (SHS AM LAM CHI FI)"
+    },
+    {
+      "name": "JOAQUIN RIGO-RIGHI BAILLIE (SHS AM LAM DI CHI&ARG&URU)"
+    },
+    {
+      "name": "Ekaterina Podnebesnova (SHS AM LAM CHI)"
+    },
+    {
+      "name": "FRANCISCO JAVIER VELEZ URIBE (SHS AM LAM COL)"
+    },
+    {
+      "name": "Sandra Milena Saenz Lozano (SHS AM LAM COL FI)"
+    },
+    {
+      "name": "FABIAN MAURICIO Rodriguez Castaneda (SHS AM LAM DI COL&ECU&PER)"
+    },
+    {
+      "name": "Wilson HERRERA SAYES (SHS AM LAM CRC)"
+    },
+    {
+      "name": "Esteban Acuna Junco (SHS AM LAM CRC FI)"
+    },
+    {
+      "name": "Elena Judith CASTILLO CASTILLO (SHS AM LAM ECU)"
+    },
+    {
+      "name": "SANDRA LILIANA SALAMANCA AVILA (SHS AM LAM ECU FI)"
+    },
+    {
+      "name": "Maria Julia LINARES (SHS DX FI LAM)"
+    },
+    {
+      "name": "BARBARA EUGENIA MAGGI GUITARD (SHS AM LAM LC)"
+    },
+    {
+      "name": "FACUNDO GONZALEZ DEL SOLAR (SHS LC CO AM-LAM)"
+    },
+    {
+      "name": "ALEJANDRO RAFAEL PAOLINI (SHS AM LAM MEX)"
+    },
+    {
+      "name": "JOSE RICARDO ACOSTA OLASCOAGA (SHS AM LAM CS MEX&CRC&ESA)"
+    },
+    {
+      "name": "Stefano Laganis Valcarcel (SHS DX C-LS LAM MEX&CRC)"
+    },
+    {
+      "name": "NANCY NATALIA KOBASHIKAWA HIGA (SHS AM LAM PER FI)"
+    },
+    {
+      "name": "Norma Lissete Mathey Sanchez (SHS AM LAM COL)"
+    },
+    {
+      "name": "Marcelo COROMINAS CACHON (SHS AM LAM URU)"
+    }
+  ],
+  "emailTimeZoneMappings": {
+    "a.laurentino.ext@siemens-healthineers.com": "America/Buenos_Aires",
+    "alderabraham.ortegagarcia.ext@siemens-healthineers.com": "US/Central",
+    "alejandro.hernandezmendoza.ext@siemens-healthineers.com": "US/Central",
+    "allan.fernandes.ext@siemens-healthineers.com": "Europe/Berlin",
+    "andres.cando.ext@siemens-healthineers.com": "Europe/Berlin",
+    "carlos.fernandez.ext@siemens-healthineers.com": "America/Buenos_Aires",
+    "charlie.sandoval.ext@siemens-healthineers.com": "US/Central",
+    "harnol.buitrago.ext@siemens-healthineers.com": "Europe/Berlin",
+    "jeu.lunarosas.ext@siemens-healthineers.com": "US/Central",
+    "josue.aldana.ext@siemens-healthineers.com": "US/Central",
+    "josueonan.cruzalfaro.ext@siemens-healthineers.com": "US/Central",
+    "keyderdavidmeneses.ramirez.ext@siemens-healthineers.com": "America/Buenos_Aires",
+    "l.arruda.ext@siemens-healthineers.com": "America/Buenos_Aires",
+    "lazarooscarfranco.zumbay.ext@siemens-healthineers.com": "Europe/Berlin",
+    "lopez.jorge.ext@siemens-healthineers.com": "Europe/Berlin",
+    "miguel.gutierrez.ext@siemens-healthineers.com": "Europe/Berlin",
+    "paul.nunez.ext@siemens-healthineers.com": "Europe/Berlin"
+  },
+  "emailCountries": [
+    {
+      "Email": "a.laurentino.ext@siemens-healthineers.com",
+      "Country": "BR"
+    },
+    {
+      "Email": "alderabraham.ortegagarcia.ext@siemens-healthineers.com",
+      "Country": "MX"
+    },
+    {
+      "Email": "alejandro.hernandezmendoza.ext@siemens-healthineers.com",
+      "Country": "CR"
+    },
+    {
+      "Email": "allan.fernandes.ext@siemens-healthineers.com",
+      "Country": "BR"
+    },
+    {
+      "Email": "andres.cando.ext@siemens-healthineers.com",
+      "Country": "EC"
+    },
+    {
+      "Email": "carlos.fernandez.ext@siemens-healthineers.com",
+      "Country": "CL"
+    },
+    {
+      "Email": "charlie.sandoval.ext@siemens-healthineers.com",
+      "Country": "CR"
+    },
+    {
+      "Email": "harnol.buitrago.ext@siemens-healthineers.com",
+      "Country": "CO"
+    },
+    {
+      "Email": "jeu.lunarosas.ext@siemens-healthineers.com",
+      "Country": "MX"
+    },
+    {
+      "Email": "josue.aldana.ext@siemens-healthineers.com",
+      "Country": "SV"
+    },
+    {
+      "Email": "keyderdavidmeneses.ramirez.ext@siemens-healthineers.com",
+      "Country": "BR"
+    },
+    {
+      "Email": "l.arruda.ext@siemens-healthineers.com",
+      "Country": "BR"
+    },
+    {
+      "Email": "lazarooscarfranco.zumbay.ext@siemens-healthineers.com",
+      "Country": "AR"
+    },
+    {
+      "Email": "lopez.jorge.ext@siemens-healthineers.com",
+      "Country": "EC"
+    },
+    {
+      "Email": "miguel.gutierrez.ext@siemens-healthineers.com",
+      "Country": "CO"
+    },
+    {
+      "Email": "paul.nunez.ext@siemens-healthineers.com",
+      "Country": "PE"
+    }
+  ],
+  "allowedCountries": [
+    "SV",
+    "CR",
+    "MX",
+    "BR",
+    "AR",
+    "PE",
+    "CL",
+    "CO",
+    "EC",
+    "UY"
+  ]
+}

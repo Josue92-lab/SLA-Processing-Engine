@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Configuraciones de la Aplicación</title>
+</head>
+<body>
+    <h1>Configuraciones de la Aplicación</h1>
+
+    <!-- Selección del tipo de configuración -->
+    <div class="form-group">
+        <label for="configType">Tipo de Configuración</label>
+        <select class="form-control" id="configType">
+            <option value="external">Externa</option>
+            <option value="internal">Interna</option>
+        </select>
+    </div>
+
+    <h1>Settings Maintenance</h1>
+
+    <h2>Excluded Emails</h2>
+    <ul id="excludedEmailsList"></ul>
+    <input type="text" id="newExcludedEmail" placeholder="Add new email">
+    <button onclick="addExcludedEmail()">Add</button>
+    <br>
+    <input type="text" id="removeExcludedEmail" placeholder="Remove email">
+    <button onclick="removeExcludedEmail()">Remove</button>
+
+    <h2>VIP Users</h2>
+    <ul id="vipUsersList"></ul>
+    <input type="text" id="newVipUser" placeholder="Add new VIP user">
+    <button onclick="addVipUser()">Add</button>
+    <br>
+    <input type="text" id="removeVipUser" placeholder="Remove VIP user">
+    <button onclick="removeVipUser()">Remove</button>
+
+    <h2>Email Time Zone Mappings</h2>
+    <ul id="emailTimeZoneMappingsList"></ul>
+    <input type="text" id="newEmailTimeZoneMappingEmail" placeholder="Email">
+    <input type="text" id="newEmailTimeZoneMappingZone" placeholder="Time Zone">
+    <button onclick="addEmailTimeZoneMapping()">Add</button>
+    <br>
+    <input type="text" id="removeEmailTimeZoneMapping" placeholder="Remove email mapping">
+    <button onclick="removeEmailTimeZoneMapping()">Remove</button>
+
+    <h2>Email Countries</h2>
+    <ul id="emailCountriesList"></ul>
+    <input type="text" id="newEmailCountryEmail" placeholder="Email">
+    <input type="text" id="newEmailCountryCountry" placeholder="Country">
+    <button onclick="addEmailCountry()">Add</button>
+    <br>
+    <input type="text" id="removeEmailCountry" placeholder="Remove email">
+    <button onclick="removeEmailCountry()">Remove</button>
+
+    <h2>Allowed Countries</h2>
+    <ul id="allowedCountriesList"></ul>
+    <input type="text" id="newAllowedCountry" placeholder="Add new country">
+    <button onclick="addAllowedCountry()">Add</button>
+    <br>
+    <input type="text" id="removeAllowedCountry" placeholder="Remove country">
+    <button onclick="removeAllowedCountry()">Remove</button>
+
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+    <script>
+        function fetchSettings(type) {
+            $.get(`/api/settings/${type}`, function (data) {
+                $('#excludedEmailsList').empty();
+                data.excludedEmails.forEach(function (email) {
+                    $('#excludedEmailsList').append('<li>' + email + '</li>');
+                });
+
+                $('#vipUsersList').empty();
+                data.vipUsers.forEach(function (user) {
+                    $('#vipUsersList').append('<li>' + user.name + '</li>');
+                });
+
+                $('#emailTimeZoneMappingsList').empty();
+                for (const [email, timeZone] of Object.entries(data.emailTimeZoneMappings)) {
+                    $('#emailTimeZoneMappingsList').append('<li>' + email + ': ' + timeZone + '</li>');
+                }
+
+                $('#emailCountriesList').empty();
+                data.emailCountries.forEach(function (entry) {
+                    $('#emailCountriesList').append('<li>' + entry.Email + ': ' + entry.Country + '</li>');
+                });
+
+                $('#allowedCountriesList').empty();
+                data.allowedCountries.forEach(function (country) {
+                    $('#allowedCountriesList').append('<li>' + country + '</li>');
+                });
+            });
+        }
+
+        function addExcludedEmail() {
+            const email = $('#newExcludedEmail').val();
+            const type = $('#configType').val();
+            $.post(`/api/settings/${type}/excludedEmails`, { email: email }, function (response) {
+                alert(response.message);
+                fetchSettings(type);
+            });
+        }
+
+        function removeExcludedEmail() {
+            const email = $('#removeExcludedEmail').val();
+            const type = $('#configType').val();
+            $.ajax({
+                url: `/api/settings/${type}/excludedEmails`,
+                type: 'DELETE',
+                data: { email: email },
+                success: function (response) {
+                    alert(response.message);
+                    fetchSettings(type);
+                }
+            });
+        }
+
+        function addVipUser() {
+            const name = $('#newVipUser').val();
+            const type = $('#configType').val();
+            $.post(`/api/settings/${type}/vipUsers`, { name: name }, function (response) {
+                alert(response.message);
+                fetchSettings(type);
+            });
+        }
+
+        function removeVipUser() {
+            const name = $('#removeVipUser').val();
+            const type = $('#configType').val();
+            $.ajax({
+                url: `/api/settings/${type}/vipUsers`,
+                type: 'DELETE',
+                data: { name: name },
+                success: function (response) {
+                    alert(response.message);
+                    fetchSettings(type);
+                }
+            });
+        }
+
+        function addEmailTimeZoneMapping() {
+            const email = $('#newEmailTimeZoneMappingEmail').val();
+            const timeZone = $('#newEmailTimeZoneMappingZone').val();
+            const type = $('#configType').val();
+            $.post(`/api/settings/${type}/emailTimeZoneMappings`, { [email]: timeZone }, function (response) {
+                alert(response.message);
+                fetchSettings(type);
+            });
+        }
+
+        function removeEmailTimeZoneMapping() {
+            const email = $('#removeEmailTimeZoneMapping').val();
+            const type = $('#configType').val();
+            $.ajax({
+                url: `/api/settings/${type}/emailTimeZoneMappings`,
+                type: 'DELETE',
+                data: { email: email },
+                success: function (response) {
+                    alert(response.message);
+                    fetchSettings(type);
+                }
+            });
+        }
+
+        function addEmailCountry() {
+            const email = $('#newEmailCountryEmail').val();
+            const country = $('#newEmailCountryCountry').val();
+            const type = $('#configType').val();
+            $.post(`/api/settings/${type}/emailCountries`, { Email: email, Country: country }, function (response) {
+                alert(response.message);
+                fetchSettings(type);
+            });
+        }
+
+        function removeEmailCountry() {
+            const email = $('#removeEmailCountry').val();
+            const type = $('#configType').val();
+            $.ajax({
+                url: `/api/settings/${type}/emailCountries`,
+                type: 'DELETE',
+                data: { email: email },
+                success: function (response) {
+                    alert(response.message);
+                    fetchSettings(type);
+                }
+            });
+        }
+
+        function addAllowedCountry() {
+            const country = $('#newAllowedCountry').val();
+            const type = $('#configType').val();
+            $.post(`/api/settings/${type}/allowedCountries`, { country: country }, function (response) {
+                alert(response.message);
+                fetchSettings(type);
+            });
+        }
+
+        function removeAllowedCountry() {
+            const country = $('#removeAllowedCountry').val();
+            const type = $('#configType').val();
+            $.ajax({
+                url: `/api/settings/${type}/allowedCountries`,
+                type: 'DELETE',
+                data: { country: country },
+                success: function (response) {
+                    alert(response.message);
+                    fetchSettings(type);
+                }
+            });
+        }
+
+        $(document).ready(function () {
+            $('#configType').change(function () {
+                const type = $(this).val();
+                fetchSettings(type);
+            });
+
+            fetchSettings('external'); // Cargar configuraciones externas por defecto
+        });
+    </script>
+</body>
+</html>
