@@ -3,6 +3,7 @@ import moment from 'moment-timezone';
 import { temporaryFile } from 'tempy';
 
 import { mapColumnHeaders, rowToTicket } from '../domain/ticket.js';
+import { PRIORITY, VERDICT, THRESHOLDS, TIMEZONE, KEYWORDS, REGEX, DATE_FORMAT } from '../domain/slaPolicy.js';
 
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
@@ -28,13 +29,15 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     });
 
     const vipNamesSet = new Set(vipUsers.map(v => v.name));
-    const wordsToSearch = ["windows", "zscaler", "vpn", "internet", "impresora", "outlook", "sharepoint", "teams", "office", "sap", "pki", "excel", "word", "certificados", "onedrive", "equipo", "red", "celular", "móvil"];
+    // Taxonomía de palabras clave — se mantiene el orden del motor original:
+    // afecta tanto la distribución por país como el layout de "Top 10 Topics".
+    const wordsToSearch = KEYWORDS;
     const wordsToSearchLower = wordsToSearch.map(w => w.toLowerCase());
 
-    // Expresiones regulares
-    const dateHtmlPattern = /<p>(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})<\/p>/;
-    const dateProcessPattern = /(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})\s*[-?\\¡¿*+;:_{}[\]]\s*En proceso/i;
-    const dateWarrantyPattern = /(\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})\s*[-?\\¡¿*+;:_{}[\]]\s*(A garantia|Garantia)/i;
+    // Expresiones regulares (centralizadas en domain/slaPolicy.js)
+    const dateHtmlPattern = REGEX.dateHtml;
+    const dateProcessPattern = REGEX.dateProcess;
+    const dateWarrantyPattern = REGEX.dateWarranty;
 
     // Contadores unificados
     let slaTotals = {
@@ -71,7 +74,7 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     slaWorksheet.getRow(1).values = ['Number', 'Priority', 'Country', 'Caller', 'Assigned to', 'Short description', 'Description','Created', 'TeamAssignmentDate', 'LastSystemUpdateDate', 'AnalystResponseDate', 'WarrantyDate', 'Resolved', 'ResponseTimeMins', 'ResolutionTimeMins', 'WarrantyTimeMins', 'ResponseSLA', 'ResolutionSLA', 'VIPResponseSLA', 'VIPResolutionSLA', 'WarrantySLA'];
     slaWorksheet.getRow(1).eachCell(cell => { cell.style = columnHeaderStyle; });
 
-    const dashboardTimeZone = 'US/Central';
+    const dashboardTimeZone = TIMEZONE.dashboard;
 
     // --- FASE 1: MAPEO DE CABECERAS (Robusto contra desorden) ---
     // Delegado a domain/ticket.js. Reemplazamos el objeto local con el devuelto.
@@ -98,8 +101,8 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
 
         totalTicketsCount++;
         const priority = ticket.Priority;
-        if (priority === "3 - Moderate") priority3TicketsCount++;
-        if (priority === "4 - Low") priority4TicketsCount++;
+        if (priority === PRIORITY.P3) priority3TicketsCount++;
+        if (priority === PRIORITY.P4) priority4TicketsCount++;
 
         // 2. Normalización de País
         const callerCountry = emailToCountryMap[email];
@@ -123,43 +126,43 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
 
         // 4. Cálculos de Tiempos y Zonas Horarias
         let ticketUpdaterTimeZone = emailTimeZoneMappings[email];
-        let creationDate = moment(ticket.Created, 'YYYY-MM-DD HH:mm:ss');
-        let resolutionDate = moment(ticket.Resolved, 'YYYY-MM-DD HH:mm:ss');
+        let creationDate = moment(ticket.Created, DATE_FORMAT.source);
+        let resolutionDate = moment(ticket.Resolved, DATE_FORMAT.source);
 
         let ticketMovedDate = date1 
-            ? moment.tz(date1, 'DD-MM-YYYY HH:mm:ss', ticketUpdaterTimeZone).tz(dashboardTimeZone)
+            ? moment.tz(date1, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone)
             : creationDate;
 
         let analystUpdateDate = null;
-        let responseSLA = "Revisar manualmente";
+        let responseSLA = VERDICT.MANUAL_REVIEW;
         let differenceFromUpdated = null;
 
         if (date2) {
-            analystUpdateDate = moment.tz(date2, 'DD-MM-YYYY HH:mm:ss', ticketUpdaterTimeZone).tz(dashboardTimeZone);
+            analystUpdateDate = moment.tz(date2, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone);
             differenceFromUpdated = analystUpdateDate.diff(ticketMovedDate, 'minutes');
 
-            if (priority === '3 - Moderate') {
-                responseSLA = differenceFromUpdated <= 120 ? "fulfilled" : "unfulfilled";
-            } else if (priority === '4 - Low') {
-                responseSLA = differenceFromUpdated <= 180 ? "fulfilled" : "unfulfilled";
+            if (priority === PRIORITY.P3) {
+                responseSLA = differenceFromUpdated <= THRESHOLDS.response.p3 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
+            } else if (priority === PRIORITY.P4) {
+                responseSLA = differenceFromUpdated <= THRESHOLDS.response.p4 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
             }
         }
 
-        let warrantyClaimDate = date3 ? moment.tz(date3, 'DD-MM-YYYY HH:mm:ss', ticketUpdaterTimeZone).tz(dashboardTimeZone) : null;
+        let warrantyClaimDate = date3 ? moment.tz(date3, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone) : null;
         let differenceFromCreated = resolutionDate.diff(ticketMovedDate, 'minutes');
         
         let warrantyDifference = null;
         let warrantySLAStatus = "";
         if (warrantyClaimDate) {
             warrantyDifference = warrantyClaimDate.diff(ticketMovedDate, 'minutes');
-            warrantySLAStatus = warrantyDifference <= 120 ? "fulfilled" : "unfulfilled";
+            warrantySLAStatus = warrantyDifference <= THRESHOLDS.warranty ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
         }
 
-        let resolutionSLA = "unfulfilled";
-        if (priority === '3 - Moderate') {
-            resolutionSLA = differenceFromCreated <= 480 ? "fulfilled" : "unfulfilled";
-        } else if (priority === '4 - Low') {
-            resolutionSLA = differenceFromCreated <= 960 ? "fulfilled" : "unfulfilled";
+        let resolutionSLA = VERDICT.UNFULFILLED;
+        if (priority === PRIORITY.P3) {
+            resolutionSLA = differenceFromCreated <= THRESHOLDS.resolution.p3 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
+        } else if (priority === PRIORITY.P4) {
+            resolutionSLA = differenceFromCreated <= THRESHOLDS.resolution.p4 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
         }
 
         const callerNameRaw = ticket.Caller || "";
@@ -172,12 +175,12 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             }
         }
 
-        let responseVip = isVip ? "Revisar manualmente" : "";
+        let responseVip = isVip ? VERDICT.MANUAL_REVIEW : "";
         let resolvedVip = "";
 
         if (isVip && analystUpdateDate) {
-            responseVip = differenceFromUpdated <= 30 ? "fulfilled" : "unfulfilled";
-            resolvedVip = differenceFromCreated <= 480 ? "fulfilled" : "unfulfilled";
+            responseVip = differenceFromUpdated <= THRESHOLDS.response.vip ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
+            resolvedVip = differenceFromCreated <= THRESHOLDS.resolution.vip ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
         }
 
         // 5. Inserción Directa en la Hoja Raw
@@ -192,12 +195,12 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             ticket["Assigned to"],
             ticket["Short description"],
             ticket["Description"],
-            creationDate.format('DD-MM-YYYY HH:mm:ss'),
+            creationDate.format(DATE_FORMAT.output),
             date1,
-            analystUpdateDate ? analystUpdateDate.format('DD-MM-YYYY HH:mm:ss') : "",
+            analystUpdateDate ? analystUpdateDate.format(DATE_FORMAT.output) : "",
             date2,
-            warrantyClaimDate ? warrantyClaimDate.format('DD-MM-YYYY HH:mm:ss') : "",
-            resolutionDate.format('DD-MM-YYYY HH:mm:ss'),
+            warrantyClaimDate ? warrantyClaimDate.format(DATE_FORMAT.output) : "",
+            resolutionDate.format(DATE_FORMAT.output),
             differenceFromUpdated !== null ? differenceFromUpdated : "",
             differenceFromCreated,
             warrantyDifference !== null ? warrantyDifference : "",
