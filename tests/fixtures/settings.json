@@ -1,0 +1,27 @@
+{
+  "_comment": "Frozen settings used by the regression harness ONLY. Decoupled from production projectSettings_*.json so ops edits (VIPs, excluded emails, TZ mappings) never destabilize the test suite. Changes to this file must be deliberate and documented in the PR that makes them.",
+
+  "excludedEmails": [
+    "excluded.analyst@example.com"
+  ],
+
+  "vipUsers": [
+    { "name": "VIP ALPHA" },
+    { "name": "VIP BETA" }
+  ],
+
+  "emailTimeZoneMappings": {
+    "analyst.central@example.com": "US/Central",
+    "analyst.argentina@example.com": "America/Buenos_Aires",
+    "analyst.berlin@example.com": "Europe/Berlin"
+  },
+
+  "emailCountries": [
+    { "Email": "caller.mx@example.com", "Country": "MX" },
+    { "Email": "caller.br@example.com", "Country": "BR" },
+    { "Email": "caller.ar@example.com", "Country": "AR" },
+    { "Email": "caller.noallowed@example.com", "Country": "MX" }
+  ],
+
+  "allowedCountries": ["MX", "BR", "AR", "CO", "CL"]
+}
