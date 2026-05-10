@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url';
 
 // Importación de rutas
 import indexRouter from './routes/index.js';
-import usersRouter from './routes/users.js';
 
 // Importación de middlewares personalizados
 import { notFoundHandler, globalErrorHandler } from './middleware/errorHandler.js';
@@ -40,7 +39,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // --- ENRUTAMIENTO ---
 app.use('/', indexRouter);
-app.use('/users', usersRouter); // Si no usas esta ruta, puedes comentarla o eliminarla
 
 // --- MANEJO DE ERRORES ---
 // 1. Capturar 404 y reenviar al manejador de errores
