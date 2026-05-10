@@ -2,6 +2,8 @@ import exceljs from 'exceljs';
 import moment from 'moment-timezone';
 import { temporaryFile } from 'tempy';
 
+import { mapColumnHeaders, rowToTicket } from '../domain/ticket.js';
+
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
     const percentage = (partialAmount / totalItems * 100).toFixed(2);
@@ -72,11 +74,8 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     const dashboardTimeZone = 'US/Central';
 
     // --- FASE 1: MAPEO DE CABECERAS (Robusto contra desorden) ---
-    sheet.getRow(1).eachCell((cell, colNumber) => {
-        if (cell.value) {
-            columnHeaders[colNumber] = cell.value.toString().trim();
-        }
-    });
+    // Delegado a domain/ticket.js. Reemplazamos el objeto local con el devuelto.
+    Object.assign(columnHeaders, mapColumnHeaders(sheet));
 
     // --- FASE 2: EL BUCLE ÚNICO (SINGLE-PASS PIPELINE) ---
     for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
@@ -89,12 +88,8 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         const row = sheet.getRow(rowNumber);
         if (!row.hasValues) continue;
 
-        // Extraer objeto de la fila
-        const ticket = {};
-        row.eachCell((cell, colNumber) => {
-            const headerName = columnHeaders[colNumber];
-            if (headerName) ticket[headerName] = cell.value;
-        });
+        // Extraer objeto de la fila (delegado a domain/ticket.js)
+        const ticket = rowToTicket(row, columnHeaders);
 
         const email = ticket["Email"] ? ticket["Email"].toString().trim() : "";
         
