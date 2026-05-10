@@ -78,8 +78,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         }
     });
 
-    let outputRowIndex = 2; // Índice para insertar en el nuevo Excel
-
     // --- FASE 2: EL BUCLE ÚNICO (SINGLE-PASS PIPELINE) ---
     for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
         
@@ -188,7 +186,10 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         }
 
         // 5. Inserción Directa en la Hoja Raw
-        slaWorksheet.insertRow(outputRowIndex++, [
+        // NOTA: Usamos addRow (append) en lugar de insertRow para evitar el
+        // desplazamiento O(n) por fila que degrada el tiempo total a O(n^2).
+        // Semánticamente equivalente: escribimos filas en orden ascendente.
+        slaWorksheet.addRow([
             ticket.Number,
             priority,
             currentCountry,

@@ -5,10 +5,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Rutas a tus archivos de configuración
+// Rutas a tus archivos de configuración.
+// Los JSON viven en /config/ (separados de /routes/ que contiene lógica HTTP).
 const paths = {
-    external: path.resolve(__dirname, '../routes/projectSettings_external.json'),
-    internal: path.resolve(__dirname, '../routes/projectSettings_internal.json')
+    external: path.resolve(__dirname, '../config/projectSettings_external.json'),
+    internal: path.resolve(__dirname, '../config/projectSettings_internal.json')
 };
 
 // Estructura por defecto si el archivo no existe o está corrupto
@@ -52,12 +53,28 @@ export const getSettings = async (type) => {
 };
 
 /**
- * Guarda el objeto de configuración en el disco duro.
+ * Guarda el objeto de configuración en el disco duro de forma ATÓMICA.
+ *
+ * Estrategia write-temp-then-rename:
+ *  1. Serializamos el JSON a un archivo temporal hermano (<path>.tmp).
+ *  2. Hacemos rename() sobre el archivo final.
+ *
+ * rename() es atómico en el mismo sistema de archivos (POSIX y Windows
+ * modernos), por lo que nunca quedamos con un JSON truncado / corrupto.
+ * Antes de este cambio, un crash a mitad de writeFile dejaba el archivo
+ * parcial → al siguiente arranque se tomaba el fallback `defaultSettings`
+ * y se perdían silenciosamente las listas de VIPs y excluidos.
+ *
  * @param {string} type - 'external' o 'internal'
  * @param {Object} data - Objeto de configuración a guardar
  */
 const saveSettingsToDisk = async (type, data) => {
-    await fs.writeFile(paths[type], JSON.stringify(data, null, 2), 'utf8');
+    const finalPath = paths[type];
+    const tmpPath = `${finalPath}.tmp`;
+    const payload = JSON.stringify(data, null, 2);
+
+    await fs.writeFile(tmpPath, payload, 'utf8');
+    await fs.rename(tmpPath, finalPath);
 };
 
 /**

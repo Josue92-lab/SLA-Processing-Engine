@@ -11,7 +11,7 @@ import http from 'http';
 /**
  * Debug configuration
  */
-const debug = debugLib('your-app-name');
+const debug = debugLib('sla-processing-engine');
 
 /**
  * Get port from environment and store in Express.
