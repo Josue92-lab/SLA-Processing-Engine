@@ -3,8 +3,10 @@ import moment from 'moment-timezone';
 import { temporaryFile } from 'tempy';
 
 import { mapColumnHeaders, rowToTicket } from '../domain/ticket.js';
-import { PRIORITY, VERDICT, THRESHOLDS, KEYWORDS, DATE_FORMAT } from '../domain/slaPolicy.js';
+import { PRIORITY, KEYWORDS, DATE_FORMAT } from '../domain/slaPolicy.js';
 import { buildTimeline } from '../domain/lifecycle.js';
+import { classifySla } from '../domain/slaRules.js';
+import { isVipCaller, classifyVip } from '../domain/vip.js';
 
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
@@ -114,53 +116,32 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             ticketMovedDate, analystUpdateDate, warrantyClaimDate
         } = buildTimeline(ticket, emailTimeZoneMappings, email);
 
-        // 4. Clasificación SLA
-        let responseSLA = VERDICT.MANUAL_REVIEW;
-        let differenceFromUpdated = null;
+        // 4. Clasificación SLA (delegado a domain/slaRules.js)
+        const {
+            responseSLA,
+            resolutionSLA,
+            warrantySLAStatus,
+            differenceFromUpdated,
+            differenceFromCreated,
+            warrantyDifference
+        } = classifySla({
+            priority,
+            date2,
+            ticketMovedDate,
+            analystUpdateDate,
+            resolutionDate,
+            warrantyClaimDate
+        });
 
-        if (date2) {
-            differenceFromUpdated = analystUpdateDate.diff(ticketMovedDate, 'minutes');
-
-            if (priority === PRIORITY.P3) {
-                responseSLA = differenceFromUpdated <= THRESHOLDS.response.p3 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-            } else if (priority === PRIORITY.P4) {
-                responseSLA = differenceFromUpdated <= THRESHOLDS.response.p4 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-            }
-        }
-
-        let differenceFromCreated = resolutionDate.diff(ticketMovedDate, 'minutes');
-
-        let warrantyDifference = null;
-        let warrantySLAStatus = "";
-        if (warrantyClaimDate) {
-            warrantyDifference = warrantyClaimDate.diff(ticketMovedDate, 'minutes');
-            warrantySLAStatus = warrantyDifference <= THRESHOLDS.warranty ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-        }
-
-        let resolutionSLA = VERDICT.UNFULFILLED;
-        if (priority === PRIORITY.P3) {
-            resolutionSLA = differenceFromCreated <= THRESHOLDS.resolution.p3 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-        } else if (priority === PRIORITY.P4) {
-            resolutionSLA = differenceFromCreated <= THRESHOLDS.resolution.p4 ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-        }
-
+        // 4b. Elevación y veredicto VIP (delegado a domain/vip.js)
         const callerNameRaw = ticket.Caller || "";
-        let isVip = false;
-        // Optimización: Set lookup is faster than Array.some if exact match, but since it's "includes", we keep iteration.
-        for(let vip of vipUsers) {
-            if (callerNameRaw.includes(vip.name)) {
-                isVip = true;
-                break;
-            }
-        }
-
-        let responseVip = isVip ? VERDICT.MANUAL_REVIEW : "";
-        let resolvedVip = "";
-
-        if (isVip && analystUpdateDate) {
-            responseVip = differenceFromUpdated <= THRESHOLDS.response.vip ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-            resolvedVip = differenceFromCreated <= THRESHOLDS.resolution.vip ? VERDICT.FULFILLED : VERDICT.UNFULFILLED;
-        }
+        const isVip = isVipCaller(callerNameRaw, vipUsers);
+        const { responseVip, resolvedVip } = classifyVip({
+            isVip,
+            analystUpdateDate,
+            differenceFromUpdated,
+            differenceFromCreated
+        });
 
         // 5. Inserción Directa en la Hoja Raw
         // NOTA: Usamos addRow (append) en lugar de insertRow para evitar el
