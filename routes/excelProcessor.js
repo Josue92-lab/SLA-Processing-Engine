@@ -3,7 +3,8 @@ import moment from 'moment-timezone';
 import { temporaryFile } from 'tempy';
 
 import { mapColumnHeaders, rowToTicket } from '../domain/ticket.js';
-import { PRIORITY, VERDICT, THRESHOLDS, TIMEZONE, KEYWORDS, REGEX, DATE_FORMAT } from '../domain/slaPolicy.js';
+import { PRIORITY, VERDICT, THRESHOLDS, KEYWORDS, DATE_FORMAT } from '../domain/slaPolicy.js';
+import { buildTimeline } from '../domain/lifecycle.js';
 
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
@@ -33,11 +34,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     // afecta tanto la distribución por país como el layout de "Top 10 Topics".
     const wordsToSearch = KEYWORDS;
     const wordsToSearchLower = wordsToSearch.map(w => w.toLowerCase());
-
-    // Expresiones regulares (centralizadas en domain/slaPolicy.js)
-    const dateHtmlPattern = REGEX.dateHtml;
-    const dateProcessPattern = REGEX.dateProcess;
-    const dateWarrantyPattern = REGEX.dateWarranty;
 
     // Contadores unificados
     let slaTotals = {
@@ -73,8 +69,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     slaWorksheet.columns = columnDefinitions.map(col => ({ ...col, style: commonStyle }));
     slaWorksheet.getRow(1).values = ['Number', 'Priority', 'Country', 'Caller', 'Assigned to', 'Short description', 'Description','Created', 'TeamAssignmentDate', 'LastSystemUpdateDate', 'AnalystResponseDate', 'WarrantyDate', 'Resolved', 'ResponseTimeMins', 'ResolutionTimeMins', 'WarrantyTimeMins', 'ResponseSLA', 'ResolutionSLA', 'VIPResponseSLA', 'VIPResolutionSLA', 'WarrantySLA'];
     slaWorksheet.getRow(1).eachCell(cell => { cell.style = columnHeaderStyle; });
-
-    const dashboardTimeZone = TIMEZONE.dashboard;
 
     // --- FASE 1: MAPEO DE CABECERAS (Robusto contra desorden) ---
     // Delegado a domain/ticket.js. Reemplazamos el objeto local con el devuelto.
@@ -112,33 +106,19 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             ticket.Country = currentCountry;
         }
 
-        // 3. Extracción de Fechas por Regex
-        const additionalContent = ticket["Additional content"] || "";
-        const additionalComments = ticket["Additional comments"] || "";
-        
-        const matchContent = additionalContent.match(dateHtmlPattern);
-        const matchProcess = additionalComments.match(dateProcessPattern);
-        const matchWarranty = additionalComments.match(dateWarrantyPattern);
+        // 3. Reconstrucción de la línea de tiempo del ticket
+        //    (regex + TZ math delegado a domain/lifecycle.js)
+        const {
+            date1, date2, date3,
+            creationDate, resolutionDate,
+            ticketMovedDate, analystUpdateDate, warrantyClaimDate
+        } = buildTimeline(ticket, emailTimeZoneMappings, email);
 
-        const date1 = matchContent ? matchContent[1] : "";
-        const date2 = matchProcess ? matchProcess[1] : "";
-        const date3 = matchWarranty ? matchWarranty[1] : "";
-
-        // 4. Cálculos de Tiempos y Zonas Horarias
-        let ticketUpdaterTimeZone = emailTimeZoneMappings[email];
-        let creationDate = moment(ticket.Created, DATE_FORMAT.source);
-        let resolutionDate = moment(ticket.Resolved, DATE_FORMAT.source);
-
-        let ticketMovedDate = date1 
-            ? moment.tz(date1, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone)
-            : creationDate;
-
-        let analystUpdateDate = null;
+        // 4. Clasificación SLA
         let responseSLA = VERDICT.MANUAL_REVIEW;
         let differenceFromUpdated = null;
 
         if (date2) {
-            analystUpdateDate = moment.tz(date2, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone);
             differenceFromUpdated = analystUpdateDate.diff(ticketMovedDate, 'minutes');
 
             if (priority === PRIORITY.P3) {
@@ -148,9 +128,8 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             }
         }
 
-        let warrantyClaimDate = date3 ? moment.tz(date3, DATE_FORMAT.inferred, ticketUpdaterTimeZone).tz(dashboardTimeZone) : null;
         let differenceFromCreated = resolutionDate.diff(ticketMovedDate, 'minutes');
-        
+
         let warrantyDifference = null;
         let warrantySLAStatus = "";
         if (warrantyClaimDate) {
