@@ -9,6 +9,8 @@ import { classifySla } from '../domain/slaRules.js';
 import { isVipCaller, classifyVip } from '../domain/vip.js';
 import { buildEmailToCountryMap, resolveCountry } from '../domain/countryResolver.js';
 import { normalizeKeywords, initCountryTopicCounts, countTopics } from '../domain/topics.js';
+import { createAggregates, hasCountryBuckets, ensureCountryBuckets, recordTicketAggregates } from '../domain/aggregates.js';
+import { createCallerCount, recordCaller } from '../domain/callers.js';
 
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
@@ -37,18 +39,10 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     const wordsToSearch = KEYWORDS;
     const wordsToSearchLower = normalizeKeywords(wordsToSearch);
 
-    // Contadores unificados
-    let slaTotals = {
-        Response: { p3Fulfilled: 0, p3Unfulfilled: 0, p4Fulfilled: 0, p4Unfulfilled: 0, vipFulfilled: 0, vipUnfulfilled: 0, manualReview: 0 },
-        Resolution: { p3Fulfilled: 0, p3Unfulfilled: 0, p4Fulfilled: 0, p4Unfulfilled: 0, vipFulfilled: 0, vipUnfulfilled: 0 },
-        Warranty: { fulfilled: 0, unfulfilled: 0 }
-    };
-
-    let slaByCountryFulfilled = {};
-    let slaByCountryUnfulfilled = {};
-    let slaByCountryManualReview = {};
+    // Contadores unificados (estructuras y lógica delegadas a domain/aggregates.js)
+    const aggregates = createAggregates();
     let wordCountsByCountry = {};
-    const callerCount = {};
+    const callerCount = createCallerCount();
 
     // --- CONFIGURACIÓN DEL NUEVO WORKBOOK ---
     const slaWorkbook = new exceljs.Workbook();
@@ -167,73 +161,24 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             warrantySLAStatus
         ]);
 
-        // 6. Actualización de Contadores Globales
-        if (responseSLA === "fulfilled") {
-            if (priority === '3 - Moderate') slaTotals.Response.p3Fulfilled++;
-            else if (priority === '4 - Low') slaTotals.Response.p4Fulfilled++;
-            if (isVip) slaTotals.Response.vipFulfilled++;
-        } else if (responseSLA === "unfulfilled") {
-            if (priority === '3 - Moderate') slaTotals.Response.p3Unfulfilled++;
-            else if (priority === '4 - Low') slaTotals.Response.p4Unfulfilled++;
-            if (isVip) slaTotals.Response.vipUnfulfilled++;
-        } else if (responseSLA === "Revisar manualmente") {
-            slaTotals.Response.manualReview++;
-        }
-
-        if (resolutionSLA === "fulfilled") {
-            if (priority === '3 - Moderate') slaTotals.Resolution.p3Fulfilled++;
-            else if (priority === '4 - Low') slaTotals.Resolution.p4Fulfilled++;
-            if (isVip) slaTotals.Resolution.vipFulfilled++;
-        } else {
-            if (priority === '3 - Moderate') slaTotals.Resolution.p3Unfulfilled++;
-            else if (priority === '4 - Low') slaTotals.Resolution.p4Unfulfilled++;
-            if (isVip) slaTotals.Resolution.vipUnfulfilled++;
-        }
-
-        if (warrantySLAStatus === "fulfilled") slaTotals.Warranty.fulfilled++;
-        else if (warrantySLAStatus === "unfulfilled") slaTotals.Warranty.unfulfilled++;
-
-        // 7. Inicialización Segura y Actualización de Contadores por País
-        if (!slaByCountryFulfilled[currentCountry]) {
-            slaByCountryFulfilled[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 }, Resolution: { p3: 0, p4: 0, vip: 0 }, Warranty: { fulfilled: 0 } };
-            slaByCountryUnfulfilled[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 }, Resolution: { p3: 0, p4: 0, vip: 0 }, Warranty: { unfulfilled: 0 } };
-            slaByCountryManualReview[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 } };
+        // 6+7. Agregación global y por país (delegado a domain/aggregates.js).
+        //      Inicialización per-country gated: aggregates lleva sus tres
+        //      stores, topics lleva el suyo, cada módulo posee su propia forma.
+        if (!hasCountryBuckets(aggregates, currentCountry)) {
+            ensureCountryBuckets(aggregates, currentCountry);
             initCountryTopicCounts(wordCountsByCountry, currentCountry, wordsToSearchLower);
         }
+        recordTicketAggregates(aggregates, {
+            priority,
+            responseSLA,
+            resolutionSLA,
+            warrantySLAStatus,
+            isVip,
+            country: currentCountry
+        });
 
-        if (responseSLA === "fulfilled") {
-            if (priority === '3 - Moderate') slaByCountryFulfilled[currentCountry].Response.p3++;
-            else if (priority === '4 - Low') slaByCountryFulfilled[currentCountry].Response.p4++;
-            if (isVip) slaByCountryFulfilled[currentCountry].Response.vip++;
-        } else if (responseSLA === "unfulfilled") {
-            if (priority === '3 - Moderate') slaByCountryUnfulfilled[currentCountry].Response.p3++;
-            else if (priority === '4 - Low') slaByCountryUnfulfilled[currentCountry].Response.p4++;
-            if (isVip) slaByCountryUnfulfilled[currentCountry].Response.vip++;
-        } else if (responseSLA === "Revisar manualmente") {
-            if (priority === '3 - Moderate') slaByCountryManualReview[currentCountry].Response.p3++;
-            else if (priority === '4 - Low') slaByCountryManualReview[currentCountry].Response.p4++;
-            if (isVip) slaByCountryManualReview[currentCountry].Response.vip++;
-        }
-
-        if (resolutionSLA === "fulfilled") {
-            if (priority === '3 - Moderate') slaByCountryFulfilled[currentCountry].Resolution.p3++;
-            else if (priority === '4 - Low') slaByCountryFulfilled[currentCountry].Resolution.p4++;
-            if (isVip) slaByCountryFulfilled[currentCountry].Resolution.vip++;
-        } else {
-            if (priority === '3 - Moderate') slaByCountryUnfulfilled[currentCountry].Resolution.p3++;
-            else if (priority === '4 - Low') slaByCountryUnfulfilled[currentCountry].Resolution.p4++;
-            if (isVip) slaByCountryUnfulfilled[currentCountry].Resolution.vip++;
-        }
-
-        if (warrantySLAStatus === "fulfilled") slaByCountryFulfilled[currentCountry].Warranty.fulfilled++;
-        else if (warrantySLAStatus === "unfulfilled") slaByCountryUnfulfilled[currentCountry].Warranty.unfulfilled++;
-
-        // 8. Caller Count Optimizado
-        const callerName = ticket.Caller || "Unknown";
-        if (!callerCount[callerName]) {
-            callerCount[callerName] = { count: 0, country: currentCountry };
-        }
-        callerCount[callerName].count++;
+        // 8. Caller Count (delegado a domain/callers.js)
+        recordCaller(callerCount, ticket.Caller, currentCountry);
 
         // 9. Conteo de Palabras (delegado a domain/topics.js)
         countTopics(ticket, currentCountry, wordCountsByCountry, wordsToSearchLower);
@@ -320,6 +265,14 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     const secondCommonStyle = { font: { name: 'Arial', size: 10 }, alignment: { horizontal: 'center', vertical: 'middle' } };
     dashboardWorksheet.columns = columnDefinitions.map(col => ({ ...col, style: secondCommonStyle, width: 12.75 }));
     
+    // Aliases para el bloque de dashboard. Apuntan a los stores dentro de
+    // `aggregates` (domain/aggregates.js) preservando exactamente los
+    // mismos paths de lectura que existían antes de la extracción.
+    const slaTotals = aggregates.totals;
+    const slaByCountryFulfilled = aggregates.byCountry.fulfilled;
+    const slaByCountryUnfulfilled = aggregates.byCountry.unfulfilled;
+    const slaByCountryManualReview = aggregates.byCountry.manualReview;
+
     dashboardWorksheet.addRow([
         null,
         slaTotals.Response.p3Fulfilled, slaTotals.Response.p3Unfulfilled,
