@@ -7,6 +7,8 @@ import { PRIORITY, KEYWORDS, DATE_FORMAT } from '../domain/slaPolicy.js';
 import { buildTimeline } from '../domain/lifecycle.js';
 import { classifySla } from '../domain/slaRules.js';
 import { isVipCaller, classifyVip } from '../domain/vip.js';
+import { buildEmailToCountryMap, resolveCountry } from '../domain/countryResolver.js';
+import { normalizeKeywords, initCountryTopicCounts, countTopics } from '../domain/topics.js';
 
 function calculatePercentageSafe(totalItems, partialAmount) {
     if (totalItems === 0) return '0.00%';
@@ -26,16 +28,14 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     let priority4TicketsCount = 0;
 
     // Diccionarios $O(1)$ para acceso ultrarrápido
-    const emailToCountryMap = {};
-    emailCountries.forEach(({ Email, Country }) => {
-        emailToCountryMap[Email] = Country;
-    });
+    // (construcción delegada a domain/countryResolver.js)
+    const emailToCountryMap = buildEmailToCountryMap(emailCountries);
 
     const vipNamesSet = new Set(vipUsers.map(v => v.name));
     // Taxonomía de palabras clave — se mantiene el orden del motor original:
     // afecta tanto la distribución por país como el layout de "Top 10 Topics".
     const wordsToSearch = KEYWORDS;
-    const wordsToSearchLower = wordsToSearch.map(w => w.toLowerCase());
+    const wordsToSearchLower = normalizeKeywords(wordsToSearch);
 
     // Contadores unificados
     let slaTotals = {
@@ -100,13 +100,9 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         if (priority === PRIORITY.P3) priority3TicketsCount++;
         if (priority === PRIORITY.P4) priority4TicketsCount++;
 
-        // 2. Normalización de País
-        const callerCountry = emailToCountryMap[email];
-        let currentCountry = ticket.Country;
-        if (!allowedCountries.includes(currentCountry)) {
-            currentCountry = callerCountry || '#';
-            ticket.Country = currentCountry;
-        }
+        // 2. Normalización de País (delegado a domain/countryResolver.js)
+        //    Preserva la mutación in-place sobre ticket.Country.
+        const currentCountry = resolveCountry(ticket, email, emailToCountryMap, allowedCountries);
 
         // 3. Reconstrucción de la línea de tiempo del ticket
         //    (regex + TZ math delegado a domain/lifecycle.js)
@@ -202,8 +198,7 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
             slaByCountryFulfilled[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 }, Resolution: { p3: 0, p4: 0, vip: 0 }, Warranty: { fulfilled: 0 } };
             slaByCountryUnfulfilled[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 }, Resolution: { p3: 0, p4: 0, vip: 0 }, Warranty: { unfulfilled: 0 } };
             slaByCountryManualReview[currentCountry] = { Response: { p3: 0, p4: 0, vip: 0 } };
-            wordCountsByCountry[currentCountry] = {};
-            wordsToSearchLower.forEach(w => wordCountsByCountry[currentCountry][w] = 0);
+            initCountryTopicCounts(wordCountsByCountry, currentCountry, wordsToSearchLower);
         }
 
         if (responseSLA === "fulfilled") {
@@ -240,21 +235,9 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         }
         callerCount[callerName].count++;
 
-        // 9. Conteo de Palabras Optimizado
-        const shortDesc = (ticket["Short description"] || "").toLowerCase();
-        const desc = (ticket.Description || "").toLowerCase();
-        
-        // Solo evalúa los "includes" una vez para ver si hay que revisar la descripción general
-        const hasAnyWordInShort = wordsToSearchLower.some(w => shortDesc.includes(w));
-        
-        wordsToSearchLower.forEach(wordLower => {
-            if (shortDesc.includes(wordLower)) {
-                wordCountsByCountry[currentCountry][wordLower]++;
-            } else if (!hasAnyWordInShort && desc.includes(wordLower)) {
-                wordCountsByCountry[currentCountry][wordLower]++;
-            }
-        });
-        
+        // 9. Conteo de Palabras (delegado a domain/topics.js)
+        countTopics(ticket, currentCountry, wordCountsByCountry, wordsToSearchLower);
+
     } // FIN BUCLE PRINCIPAL
 
     console.log(`Finalizados los cálculos. Escribiendo resultados...`);
