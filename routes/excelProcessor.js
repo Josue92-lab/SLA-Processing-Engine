@@ -25,7 +25,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     
     // --- INICIALIZACIÓN DE VARIABLES Y CACHÉS ---
     const columnHeaders = {};
-    let totalTicketsCount = 0;
     let priority3TicketsCount = 0;
     let priority4TicketsCount = 0;
 
@@ -33,7 +32,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
     // (construcción delegada a domain/countryResolver.js)
     const emailToCountryMap = buildEmailToCountryMap(emailCountries);
 
-    const vipNamesSet = new Set(vipUsers.map(v => v.name));
     // Taxonomía de palabras clave — se mantiene el orden del motor original:
     // afecta tanto la distribución por país como el layout de "Top 10 Topics".
     const wordsToSearch = KEYWORDS;
@@ -89,7 +87,6 @@ async function processExcelFile(filePath, vipUsers, emailTimeZoneMappings, exclu
         // 1. Filtro inmediato: Si está excluido, saltamos al siguiente ticket (Ahorro masivo de procesamiento)
         if (excludedEmails.includes(email)) continue;
 
-        totalTicketsCount++;
         const priority = ticket.Priority;
         if (priority === PRIORITY.P3) priority3TicketsCount++;
         if (priority === PRIORITY.P4) priority4TicketsCount++;

@@ -68,18 +68,19 @@
  *    seeds (non-P3/P4 => responseSLA=MANUAL_REVIEW, resolutionSLA=UNFULFILLED)
  *    and is load-bearing.
  *
- * 7. Priority string literals are intentionally duplicated with slaPolicy.
- *    The original inline code checks `priority === '3 - Moderate'` /
- *    `'4 - Low'` using raw string literals rather than PRIORITY.P3/P4.
- *    We preserve the exact same literals here to avoid any risk of
- *    divergence under a future slaPolicy.js rename; the equality check
- *    is byte-identical to the pre-extraction code. Changing this to
- *    PRIORITY.* imports would be a trivial follow-up PR with no
- *    behavioural change — explicitly deferred.
+ * 7. Priority string literals come from `PRIORITY.P3` / `PRIORITY.P4`.
+ *    Equality is still strict string comparison — `PRIORITY` is a frozen
+ *    object in `slaPolicy.js` whose values are exactly `'3 - Moderate'`
+ *    and `'4 - Low'`, so the runtime behaviour is byte-identical to the
+ *    pre-Phase-1b-stabilization code. The imports eliminate the literal
+ *    duplication between this file and `slaPolicy.js` so a future
+ *    priority-label rename touches only one place.
  *
  * Risk profile: zero behaviour change. Every branch, operator, and side
  * effect from steps 6 and 7 is preserved.
  */
+
+import { PRIORITY } from './slaPolicy.js';
 
 /**
  * @typedef {Object} SlaTotals
@@ -182,12 +183,12 @@ export function recordTicketAggregates(aggregates, classification) {
     // -------- Global totals (step 6 in the original pipeline) --------
 
     if (responseSLA === "fulfilled") {
-        if (priority === '3 - Moderate') totals.Response.p3Fulfilled++;
-        else if (priority === '4 - Low') totals.Response.p4Fulfilled++;
+        if (priority === PRIORITY.P3) totals.Response.p3Fulfilled++;
+        else if (priority === PRIORITY.P4) totals.Response.p4Fulfilled++;
         if (isVip) totals.Response.vipFulfilled++;
     } else if (responseSLA === "unfulfilled") {
-        if (priority === '3 - Moderate') totals.Response.p3Unfulfilled++;
-        else if (priority === '4 - Low') totals.Response.p4Unfulfilled++;
+        if (priority === PRIORITY.P3) totals.Response.p3Unfulfilled++;
+        else if (priority === PRIORITY.P4) totals.Response.p4Unfulfilled++;
         if (isVip) totals.Response.vipUnfulfilled++;
     } else if (responseSLA === "Revisar manualmente") {
         totals.Response.manualReview++;
@@ -196,13 +197,13 @@ export function recordTicketAggregates(aggregates, classification) {
     }
 
     if (resolutionSLA === "fulfilled") {
-        if (priority === '3 - Moderate') totals.Resolution.p3Fulfilled++;
-        else if (priority === '4 - Low') totals.Resolution.p4Fulfilled++;
+        if (priority === PRIORITY.P3) totals.Resolution.p3Fulfilled++;
+        else if (priority === PRIORITY.P4) totals.Resolution.p4Fulfilled++;
         if (isVip) totals.Resolution.vipFulfilled++;
     } else {
         // Intentional `else` (not `else if === "unfulfilled"`) — see asymmetry 3.
-        if (priority === '3 - Moderate') totals.Resolution.p3Unfulfilled++;
-        else if (priority === '4 - Low') totals.Resolution.p4Unfulfilled++;
+        if (priority === PRIORITY.P3) totals.Resolution.p3Unfulfilled++;
+        else if (priority === PRIORITY.P4) totals.Resolution.p4Unfulfilled++;
         if (isVip) totals.Resolution.vipUnfulfilled++;
     }
 
@@ -213,27 +214,27 @@ export function recordTicketAggregates(aggregates, classification) {
     // -------- Per-country counters (step 7 in the original pipeline) --------
 
     if (responseSLA === "fulfilled") {
-        if (priority === '3 - Moderate') fulfilled.Response.p3++;
-        else if (priority === '4 - Low') fulfilled.Response.p4++;
+        if (priority === PRIORITY.P3) fulfilled.Response.p3++;
+        else if (priority === PRIORITY.P4) fulfilled.Response.p4++;
         if (isVip) fulfilled.Response.vip++;
     } else if (responseSLA === "unfulfilled") {
-        if (priority === '3 - Moderate') unfulfilled.Response.p3++;
-        else if (priority === '4 - Low') unfulfilled.Response.p4++;
+        if (priority === PRIORITY.P3) unfulfilled.Response.p3++;
+        else if (priority === PRIORITY.P4) unfulfilled.Response.p4++;
         if (isVip) unfulfilled.Response.vip++;
     } else if (responseSLA === "Revisar manualmente") {
-        if (priority === '3 - Moderate') manualReview.Response.p3++;
-        else if (priority === '4 - Low') manualReview.Response.p4++;
+        if (priority === PRIORITY.P3) manualReview.Response.p3++;
+        else if (priority === PRIORITY.P4) manualReview.Response.p4++;
         if (isVip) manualReview.Response.vip++;
     }
 
     if (resolutionSLA === "fulfilled") {
-        if (priority === '3 - Moderate') fulfilled.Resolution.p3++;
-        else if (priority === '4 - Low') fulfilled.Resolution.p4++;
+        if (priority === PRIORITY.P3) fulfilled.Resolution.p3++;
+        else if (priority === PRIORITY.P4) fulfilled.Resolution.p4++;
         if (isVip) fulfilled.Resolution.vip++;
     } else {
         // Same `else` (not `else if`) as the global branch — see asymmetry 3.
-        if (priority === '3 - Moderate') unfulfilled.Resolution.p3++;
-        else if (priority === '4 - Low') unfulfilled.Resolution.p4++;
+        if (priority === PRIORITY.P3) unfulfilled.Resolution.p3++;
+        else if (priority === PRIORITY.P4) unfulfilled.Resolution.p4++;
         if (isVip) unfulfilled.Resolution.vip++;
     }
 
