@@ -340,14 +340,26 @@ it was originally created in ServiceNow. A ticket with
 before reaching L1.5, which can inflate breach magnitudes beyond what
 the L1.5 team actually controlled.
 
-### 6.3 Constraints for future design
+The issue is **confidence, not reassignment itself.** Reassignment alone
+does not imply a wrong verdict — most reassigned tickets have SLA
+deltas that are still reliably attributable to L1.5.
 
-- `reassignment_count > 0` alone **must not** trigger manual review.
-  Most reassigned tickets have valid SLA calculations under the normal
-  rules, and blanket routing to manual review would flood the analyst
-  queue.
-- The real concern is narrow: heavily exceeded SLA breaches where
-  ownership timing cannot be reconstructed reliably.
+### 6.3 Intended operational behavior
+
+Three disjoint cases, expressed as the target spec for a future
+implementation:
+
+1. `reassignment_count == 0` → evaluate normally.
+2. `reassignment_count > 0` with reasonable SLA deltas → still evaluate
+   normally. Reassignment alone does not change the verdict.
+3. `reassignment_count > 0` with abnormally large deltas → mark as
+   `Revisar manualmente` (low confidence). The breach magnitude cannot
+   be attributed reliably from the export.
+
+Cases 1 and 2 are byte-for-byte identical to today's behavior. Case 3
+is the only behavioral change this layer introduces. The "abnormally
+large" threshold is a calibration parameter (settings-driven, tuned
+against historical data with product sign-off), not a code constant.
 
 ### 6.4 Future architectural direction (not for implementation yet)
 
@@ -357,15 +369,19 @@ consuming classification outputs only. Working module name:
 
 - Live **outside** `domain/slaRules.js` and `domain/vip.js`, which
   remain pure rule evaluators.
-- Consider all three triggers in combination (any one alone is not
-  enough): `reassignment_count > 0` + significant breach magnitude +
-  insufficient corroborating evidence.
-- Be configurable and auditable — every downgrade from `unfulfilled`
-  to `Revisar manualmente` must be recorded (original verdict,
-  triggers, reason) so the operational team can tune thresholds
-  without code changes.
-- Preserve the golden-output invariant for tickets that do **not** meet
-  all triggers.
+- Trigger only when **both** conditions hold: `reassignment_count > 0`
+  AND the `unfulfilled` verdict's delta exceeds the SLA threshold by a
+  calibrated multiplier. Never upgrade verdicts. Never touch
+  `fulfilled` tickets. Never touch the timeline directly.
+- Overload the existing `Revisar manualmente` verdict rather than
+  introduce a fourth string — the operational team already reviews
+  that bucket, and adding low-confidence cases matches the workflow.
+  If reporting needs to distinguish the two meanings later, record the
+  reason code in the audit trail instead of a verdict change.
+- Be configurable and auditable — every downgrade must be recorded
+  (original verdict, reassignment count, delta, threshold, multiplier,
+  reason) so operators can tune without code changes.
+- Preserve the golden-output invariant for tickets in cases 1 and 2.
 - Not touch timezone inference or normalization (see §4).
 
 ---
