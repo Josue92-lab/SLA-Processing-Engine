@@ -35,21 +35,100 @@
  *      match is typically the correct "first response" event — but this
  *      is not verified.
  *
- *   2. Silent TZ fallback. If `emailTimeZoneMappings[email]` is undefined
- *      (analyst not in the mapping file), `moment.tz(..., undefined)`
- *      silently falls back to the server's local timezone. That means SLA
- *      deltas can be off by several hours depending on where the server
- *      runs. Preserved intentionally — see Phase 2 roadmap.
+ *   2. TZ fallback on unmapped email. If `emailTimeZoneMappings[email]`
+ *      is undefined (analyst not in the mapping file), `moment.tz(...,
+ *      undefined)` falls back to the server's local timezone. SLA deltas
+ *      for affected tickets can be off by several hours depending on where
+ *      the server runs. The fallback itself is preserved intentionally
+ *      — Phase 1b stabilization only ADDED observability; it did not
+ *      change the computation. See `warnOnceForUnmappedEmail` below.
  *
- * Risk profile: zero behaviour change vs. the inline logic previously
+ * Risk profile: zero SLA-math change vs. the inline logic previously
  * embedded in routes/excelProcessor.js. Regexes, TZ handling, and moment
  * object identity (ticketMovedDate === creationDate when no team-assignment
- * was inferred) are all preserved.
+ * was inferred) are all preserved. The only observable-behaviour change is
+ * first-occurrence stderr warnings for unmapped-email TZ fallback; cell
+ * values in the output workbook are unaffected.
  */
 
 import moment from 'moment-timezone';
 
 import { REGEX, DATE_FORMAT, TIMEZONE } from './slaPolicy.js';
+
+// ---------------------------------------------------------------------------
+// TZ-fallback observability
+// ---------------------------------------------------------------------------
+
+/**
+ * Process-wide dedupe set of analyst emails that have already triggered a
+ * "missing timezone mapping" warning. We warn exactly once per unique email
+ * per Node process so a 10k-row export with 50 unmapped analysts produces
+ * 50 log lines, not one per ticket.
+ *
+ * Trade-off (preserved intentionally during Phase 1b stabilization):
+ *   In a long-lived server process, this set persists across pipeline
+ *   invocations. Report #2 will not re-warn for emails that were already
+ *   warned during report #1. That is the right granularity for a CLI tool
+ *   or a short-lived worker. If production deployment topology needs
+ *   per-run warnings (e.g. the operator runs multiple reports back-to-back
+ *   and wants each run's warnings to be self-contained), the right fix is
+ *   to thread an explicit observer object through `buildTimeline` —
+ *   deferred as a Phase 2/3 orchestration concern, not a Phase 1b change.
+ */
+const loggedUnmappedEmails = new Set();
+
+/**
+ * Emit a first-occurrence stderr warning for a ticket whose analyst email
+ * has no entry in the timezone mapping. Called only from the narrow path
+ * in `buildTimeline` where the missing mapping actually affects SLA math
+ * — i.e. when at least one inferred date is present and would be parsed
+ * with `moment.tz(..., undefined)`. Tickets with no inferred dates do not
+ * exercise the fallback and do not warn.
+ *
+ * This function never throws and never mutates the ticket. It only writes
+ * to stderr via `console.warn`.
+ *
+ * @param {string} email - Analyst email, pre-trimmed by the caller. May be "".
+ * @param {string} ticketNumber - Passed through into the message for
+ *                                traceability when an operator wants to
+ *                                grep the export for the offending row.
+ */
+function warnOnceForUnmappedEmail(email, ticketNumber) {
+    // Key the dedupe set on a non-empty sentinel for the empty-email case
+    // so we do not collide with any legitimate email equal to "<empty>".
+    const key = email || "<empty-email>";
+    if (loggedUnmappedEmails.has(key)) return;
+    loggedUnmappedEmails.add(key);
+
+    if (email) {
+        console.warn(
+            `[lifecycle] No timezone mapping for analyst email "${email}" ` +
+            `(first seen on ticket ${ticketNumber || "<unknown>"}); ` +
+            `falling back to server local time for inferred dates. ` +
+            `This may skew SLA deltas by hours. Fix: add the email to ` +
+            `emailTimeZoneMappings in the settings file.`
+        );
+    } else {
+        console.warn(
+            `[lifecycle] Ticket ${ticketNumber || "<unknown>"} has an empty ` +
+            `Email field; timezone lookup falling back to server local time ` +
+            `for inferred dates. Fix: either add "" to excludedEmails if ` +
+            `this is intentional, or populate the ticket's Email column.`
+        );
+    }
+}
+
+/**
+ * Reset the process-wide unmapped-email dedupe set. Intended for test
+ * harnesses that invoke `buildTimeline` multiple times in the same
+ * process and need each invocation's warnings to be independent. Not
+ * used by the production pipeline.
+ *
+ * @returns {void}
+ */
+export function resetUnmappedEmailWarningsForTesting() {
+    loggedUnmappedEmails.clear();
+}
 
 /**
  * @typedef {Object} InferredDates
@@ -113,8 +192,10 @@ export function extractInferredDates(ticket) {
  *     team-assignment marker is present.
  *   - analystUpdateDate / warrantyClaimDate are null when their respective
  *     markers are absent — callers check with a truthy guard.
- *   - If emailTimeZoneMappings[email] is undefined, moment-timezone silently
- *     uses the server's local zone. Preserved as-is (see module header).
+ *   - If emailTimeZoneMappings[email] is undefined, moment-timezone uses
+ *     the server's local zone. The FALLBACK is preserved, but a first-
+ *     occurrence stderr warning is emitted (see warnOnceForUnmappedEmail).
+ *     Module header rule #2 has the full rationale.
  *
  * @param {Object} ticket
  * @param {Object<string,string>} emailTimeZoneMappings - email -> TZ name (e.g. "America/Buenos_Aires")
@@ -126,6 +207,21 @@ export function buildTimeline(ticket, emailTimeZoneMappings, email) {
 
     const ticketUpdaterTimeZone = emailTimeZoneMappings[email];
     const dashboardTimeZone     = TIMEZONE.dashboard;
+
+    // Observability: warn (once per unique email per process) when we are
+    // about to exercise the TZ fallback for a ticket with inferred dates.
+    //
+    // Gate: at least one of date1/date2/date3 is present. Without any
+    // inferred dates, the three ternaries below never call moment.tz with
+    // the undefined `ticketUpdaterTimeZone`, so the fallback does not
+    // actually fire and a warning would be a false positive.
+    //
+    // This does not change which path executes — the existing moment.tz
+    // calls still proceed exactly as before. It only surfaces the
+    // condition to the operator.
+    if (!ticketUpdaterTimeZone && (date1 || date2 || date3)) {
+        warnOnceForUnmappedEmail(email, ticket.Number);
+    }
 
     const creationDate   = moment(ticket.Created,  DATE_FORMAT.source);
     const resolutionDate = moment(ticket.Resolved, DATE_FORMAT.source);
