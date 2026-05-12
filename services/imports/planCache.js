@@ -24,6 +24,8 @@
 
 import { randomUUID } from 'crypto';
 
+import { ImportError, ERR } from './errors.js';
+
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 // Sweep every minute. This is a bound on "how long an expired entry can
 // linger after the TTL elapsed" - never a correctness concern, because
@@ -122,6 +124,26 @@ export const createPlanCache = (opts = {}) => {
 
     const del = (planId) => store.delete(planId);
 
+    /**
+     * Variant of `get` that throws a structured `ImportError(ERR.PLAN_STALE)`
+     * when the plan is missing or expired. Intended for the apply path so the
+     * router can respond with a consistent 409 without branching in-line.
+     *
+     * @param {string} planId
+     * @returns {CachedPlanEntry}
+     */
+    const getOrThrow = (planId) => {
+        const entry = get(planId);
+        if (!entry) {
+            throw new ImportError(
+                ERR.PLAN_STALE,
+                `Plan ${planId} not found or expired. Please re-run preview.`,
+                { planId }
+            );
+        }
+        return entry;
+    };
+
     const size = () => {
         // Proactively reap before reporting for a consistent view.
         sweepExpired();
@@ -130,7 +152,7 @@ export const createPlanCache = (opts = {}) => {
 
     const clear = () => store.clear();
 
-    return { put, get, delete: del, size, clear, _stopSweep: stopSweep };
+    return { put, get, getOrThrow, delete: del, size, clear, _stopSweep: stopSweep };
 };
 
 // Process-wide singleton used by the HTTP route. Tests inject their own.

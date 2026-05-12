@@ -78,6 +78,45 @@ const saveSettingsToDisk = async (type, data) => {
 };
 
 /**
+ * Devuelve la ruta absoluta del archivo de configuración en disco.
+ *
+ * Expuesto para la capa de imports (services/imports/snapshotManager.js) que
+ * necesita copiar el archivo de settings al directorio de snapshots ANTES
+ * de que updateSettings() lo sobrescriba. La lógica de escritura sigue
+ * encapsulada dentro de updateSettings().
+ *
+ * NO usar para escrituras directas desde fuera del módulo - rompería la
+ * garantía atómica + cola + cache que ofrece updateSettings().
+ *
+ * @param {string} type - 'external' o 'internal'
+ * @returns {string} Ruta absoluta al JSON de settings
+ * @throws {Error} Si `type` no es 'external' ni 'internal'
+ */
+export const getSettingsFilePath = (type) => {
+    if (!(type in paths)) {
+        throw new Error(`Unknown settings type: ${type}`);
+    }
+    return paths[type];
+};
+
+/**
+ * Invalida la caché en memoria para el tipo indicado. La siguiente llamada a
+ * getSettings() volverá a leer desde disco.
+ *
+ * Expuesto para el flujo de rollback (services/imports), que restaura el
+ * contenido del archivo vía updateSettings() pero además refresca la caché
+ * defensivamente por si hubiera cambios externos al archivo (p. ej. un editor
+ * manual). Llamadas con un tipo desconocido son no-op (no lanzan).
+ *
+ * @param {string} type - 'external' o 'internal'
+ */
+export const invalidateCache = (type) => {
+    if (type in cache) {
+        cache[type] = null;
+    }
+};
+
+/**
  * Actualiza la configuración de forma segura (Atómica).
  * Garantiza que múltiples peticiones simultáneas no corrompan el archivo.
  * * @param {string} type - 'external' o 'internal'
