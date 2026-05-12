@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 // Importación de rutas
 import indexRouter from './routes/index.js';
+import importRouter from './routes/settingsImport.js';
 
 // Importación de middlewares personalizados
 import { notFoundHandler, globalErrorHandler } from './middleware/errorHandler.js';
@@ -38,6 +39,11 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- ENRUTAMIENTO ---
+// Mount import router FIRST so its `/api/settings/:type/import/*` paths
+// take precedence over any future wildcard on indexRouter. indexRouter
+// currently does not collide with these paths, but the ordering keeps the
+// import feature isolated and easy to remove in a single diff.
+app.use('/', importRouter);
 app.use('/', indexRouter);
 
 // --- MANEJO DE ERRORES ---
