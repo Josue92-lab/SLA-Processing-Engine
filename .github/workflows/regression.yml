@@ -1,0 +1,100 @@
+name: Regression Harness
+
+# Gate every pull request to main, and every push to main itself, on the
+# byte-for-byte value-level regression harness at tests/regression.js.
+#
+# Why this exists: Phase 1b (see .kiro/steering/phase-1b-summary.md) froze the
+# engine's output as the contract — tests/golden/golden.json. Before Phase 2
+# (presentation extraction) starts, that contract needs to be enforced by
+# tooling rather than by human discipline on every PR.
+#
+# Exit codes the harness uses:
+#   0  snapshot matches golden
+#   1  snapshot differs (prints up to 40 diffs, then a summary count)
+#   2  golden missing — first-time setup not done
+#
+# GitHub Actions fails the job on any non-zero exit, so all three states
+# surface in the PR check UI without extra logic here.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Avoid piling up redundant runs when a PR is pushed to rapidly. Cancel the
+# in-flight run for the same ref and let the newest one be the source of truth.
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: test:regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        # Node 22 chosen deliberately. The codebase is ESM (package.json
+        # "type": "module") and uses modern import / import.meta / fs/promises
+        # APIs that require Node 18+. Node 22 is the current LTS and matches
+        # the author environment used during Phase 1b. If Phase 2 needs to
+        # validate across multiple Node versions, extend this to a matrix:
+        #   strategy:
+        #     matrix:
+        #       node-version: [18, 20, 22]
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # Plain `npm install` rather than `npm ci` because there is no
+        # committed package-lock.json yet. When a lockfile lands, switch
+        # this step to `npm ci` and add `cache: 'npm'` to the setup-node
+        # step above — `npm ci` is faster and guarantees reproducible
+        # installs. Not blocking the CI rollout on that.
+        run: npm install
+
+      - name: Run regression harness
+        # Expected output on a clean PR:
+        #   [regression] PASS - 4 sheets, all cells match golden.
+        # Any FAIL output tells you which sheet / row / column diverged.
+        #
+        # TZ pin rationale (IMPORTANT — do not remove without reading this):
+        #
+        # domain/lifecycle.js mixes two kinds of moments inside the engine:
+        #   - naive:    moment(ticket.Created, DATE_FORMAT.source) — parsed
+        #               in the server's local timezone (process.env.TZ).
+        #   - TZ-aware: moment.tz(date1, ..., analystTZ).tz(dashboardTZ) —
+        #               anchored explicitly to US/Central regardless of host.
+        #
+        # When a ticket has a <p>DD-MM-YYYY HH:mm:ss</p> team-assignment
+        # marker (the vast majority do), differenceFromCreated is computed as:
+        #     resolutionDate.diff(ticketMovedDate, 'minutes')
+        #             ^naive              ^TZ-aware (US/Central)
+        #
+        # The UTC instant of the naive side depends on TZ. The golden was
+        # generated on a host running in US/Central; every minute delta that
+        # mixes a naive and a TZ-aware operand is therefore anchored to
+        # US/Central. On GitHub's ubuntu-latest runner (default TZ: UTC) the
+        # same fixture produces deltas shifted by the US/Central-vs-UTC
+        # offset, which surfaces as cell-value regressions in RawSLAData
+        # and cascades through DashboardSLAData.
+        #
+        # Pinning TZ=US/Central makes the runner's naive-moment arithmetic
+        # byte-identical to the author's local machine, which is how the
+        # golden was originally captured.
+        #
+        # This is NOT a fix for the underlying mixed-TZ arithmetic in
+        # lifecycle.js; that is documented as a preserved invariant in
+        # .kiro/steering/phase-1b-summary.md section 4. A future phase that
+        # normalizes all timestamps to TZ-aware moments at parse time will
+        # make this pin unnecessary — and should DELETE the env: block along
+        # with the naive moment() calls in a single coordinated PR.
+        env:
+          TZ: US/Central
+        run: npm run test:regression
