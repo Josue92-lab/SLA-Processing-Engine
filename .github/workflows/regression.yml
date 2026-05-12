@@ -63,4 +63,38 @@ jobs:
         # Expected output on a clean PR:
         #   [regression] PASS - 4 sheets, all cells match golden.
         # Any FAIL output tells you which sheet / row / column diverged.
+        #
+        # TZ pin rationale (IMPORTANT — do not remove without reading this):
+        #
+        # domain/lifecycle.js mixes two kinds of moments inside the engine:
+        #   - naive:    moment(ticket.Created, DATE_FORMAT.source) — parsed
+        #               in the server's local timezone (process.env.TZ).
+        #   - TZ-aware: moment.tz(date1, ..., analystTZ).tz(dashboardTZ) —
+        #               anchored explicitly to US/Central regardless of host.
+        #
+        # When a ticket has a <p>DD-MM-YYYY HH:mm:ss</p> team-assignment
+        # marker (the vast majority do), differenceFromCreated is computed as:
+        #     resolutionDate.diff(ticketMovedDate, 'minutes')
+        #             ^naive              ^TZ-aware (US/Central)
+        #
+        # The UTC instant of the naive side depends on TZ. The golden was
+        # generated on a host running in US/Central; every minute delta that
+        # mixes a naive and a TZ-aware operand is therefore anchored to
+        # US/Central. On GitHub's ubuntu-latest runner (default TZ: UTC) the
+        # same fixture produces deltas shifted by the US/Central-vs-UTC
+        # offset, which surfaces as cell-value regressions in RawSLAData
+        # and cascades through DashboardSLAData.
+        #
+        # Pinning TZ=US/Central makes the runner's naive-moment arithmetic
+        # byte-identical to the author's local machine, which is how the
+        # golden was originally captured.
+        #
+        # This is NOT a fix for the underlying mixed-TZ arithmetic in
+        # lifecycle.js; that is documented as a preserved invariant in
+        # .kiro/steering/phase-1b-summary.md section 4. A future phase that
+        # normalizes all timestamps to TZ-aware moments at parse time will
+        # make this pin unnecessary — and should DELETE the env: block along
+        # with the naive moment() calls in a single coordinated PR.
+        env:
+          TZ: US/Central
         run: npm run test:regression
