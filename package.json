@@ -11,7 +11,8 @@
     "start": "node ./bin/www",
     "test:fixture:build": "node ./tests/build-fixture.js",
     "test:regression": "node ./tests/regression.js",
-    "test:regression:update": "node ./tests/regression.js --update"
+    "test:regression:update": "node ./tests/regression.js --update",
+    "test:imports": "node --test --test-concurrency=1 tests/imports/*.test.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
