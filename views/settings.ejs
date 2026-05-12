@@ -141,7 +141,7 @@
             const email = $('#newEmailTimeZoneMappingEmail').val();
             const timeZone = $('#newEmailTimeZoneMappingZone').val();
             const type = $('#configType').val();
-            $.post(`/api/settings/${type}/emailTimeZoneMappings`, { [email]: timeZone }, function (response) {
+            $.post(`/api/settings/${type}/emailTimeZoneMappings`, { email: email, timezone: timeZone }, function (response) {
                 alert(response.message);
                 fetchSettings(type);
             });
@@ -165,7 +165,7 @@
             const email = $('#newEmailCountryEmail').val();
             const country = $('#newEmailCountryCountry').val();
             const type = $('#configType').val();
-            $.post(`/api/settings/${type}/emailCountries`, { Email: email, Country: country }, function (response) {
+            $.post(`/api/settings/${type}/emailCountries`, { email: email, country: country }, function (response) {
                 alert(response.message);
                 fetchSettings(type);
             });
