@@ -62,3 +62,31 @@ test('planId values are unique across puts', () => {
     }
     assert.equal(ids.size, 50);
 });
+
+test('getOrThrow returns the entry when present', () => {
+    const cache = createPlanCache({ sweepIntervalMs: 0 });
+    const id = cache.put({ type: 'external', plan: { a: 1 } });
+    const entry = cache.getOrThrow(id);
+    assert.equal(entry.plan.a, 1);
+});
+
+test('getOrThrow throws ImportError(PLAN_STALE) when missing', () => {
+    const cache = createPlanCache({ sweepIntervalMs: 0 });
+    assert.throws(() => cache.getOrThrow('missing-id'), (err) => {
+        assert.equal(err.name, 'ImportError');
+        assert.equal(err.code, 'PLAN_STALE');
+        assert.equal(err.details.planId, 'missing-id');
+        return true;
+    });
+});
+
+test('getOrThrow throws ImportError(PLAN_STALE) when expired', () => {
+    let now = 1000;
+    const cache = createPlanCache({ ttlMs: 50, sweepIntervalMs: 0, now: () => now });
+    const id = cache.put({ type: 'external', plan: {} });
+    now += 100;
+    assert.throws(() => cache.getOrThrow(id), (err) => {
+        assert.equal(err.code, 'PLAN_STALE');
+        return true;
+    });
+});

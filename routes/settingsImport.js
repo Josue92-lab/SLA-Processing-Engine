@@ -32,12 +32,23 @@ import { parseWorkbook } from '../services/imports/excelImportParser.js';
 import { normalizeAll } from '../services/imports/userNormalizer.js';
 import { validateCrossFile, deduplicateByEmail } from '../services/imports/importValidator.js';
 import { build as buildPlan } from '../services/imports/importPlanner.js';
-import { readLastImport } from '../services/imports/snapshotManager.js';
+import {
+    readLastImport,
+    writeLastImport,
+    createSnapshot,
+    listSnapshots,
+    readSnapshot,
+    pruneSnapshots
+} from '../services/imports/snapshotManager.js';
+import { apply as applierApply } from '../services/imports/importApplier.js';
+import { runLocked } from '../services/imports/importLockManager.js';
 import { ImportError, ERR } from '../services/imports/errors.js';
-import { getSettings } from '../services/settingsService.js';
+import { getSettings, updateSettings, invalidateCache } from '../services/settingsService.js';
 import { defaultPlanCache } from '../services/imports/planCache.js';
 
 const VALID_TYPES = new Set(['external', 'internal']);
+
+const SNAPSHOT_RETENTION = 10;
 
 // ---------------------------------------------------------------------------
 // Multer instance (local to this router by design)
@@ -112,8 +123,13 @@ const uploadFields = importUpload.fields([
 // Exported as a factory so tests can inject a disposable plan cache.
 // The default export wires the singleton cache.
 
-export const createImportRouter = ({ planCache = defaultPlanCache } = {}) => {
+export const createImportRouter = ({ planCache = defaultPlanCache, snapshotBaseDir } = {}) => {
     const router = express.Router();
+
+    // Optional override for tests: redirects snapshot + sidecar I/O to a
+    // disposable directory. In production this is undefined; snapshotManager
+    // falls back to the real `config/imports/` path.
+    const snapOpts = snapshotBaseDir ? { baseDir: snapshotBaseDir } : undefined;
 
     router.param('type', (req, res, next, type) => {
         if (!VALID_TYPES.has(type)) {
@@ -130,14 +146,26 @@ export const createImportRouter = ({ planCache = defaultPlanCache } = {}) => {
     router.post('/api/settings/:type/import/preview', (req, res, next) => {
         uploadFields(req, res, (uploadErr) => {
             if (uploadErr) return handleUploadError(uploadErr, res);
-            return handlePreview(req, res, planCache).catch(next);
+            return handlePreview(req, res, planCache, snapOpts).catch(next);
         });
     });
 
-    // Intentional 501s for endpoints that land in Merge 3.
-    router.post('/api/settings/:type/import/apply', notImplemented('apply'));
-    router.post('/api/settings/:type/import/rollback', notImplemented('rollback'));
-    router.get('/api/settings/:type/import/snapshots', notImplemented('snapshots'));
+    router.post(
+        '/api/settings/:type/import/apply',
+        express.json(),
+        (req, res, next) => handleApply(req, res, planCache, snapOpts).catch(next)
+    );
+
+    router.get(
+        '/api/settings/:type/import/snapshots',
+        (req, res, next) => handleListSnapshots(req, res, snapOpts).catch(next)
+    );
+
+    router.post(
+        '/api/settings/:type/import/rollback',
+        express.json(),
+        (req, res, next) => handleRollback(req, res, snapOpts).catch(next)
+    );
 
     return router;
 };
@@ -181,7 +209,7 @@ const handleUploadError = (err, res) => {
 // Preview pipeline
 // ---------------------------------------------------------------------------
 
-const handlePreview = async (req, res, planCache) => {
+const handlePreview = async (req, res, planCache, snapOpts) => {
     const type = req.params.type;
     const started = Date.now();
     console.log(`[settingsImport] preview started type=${type}`);
@@ -253,7 +281,7 @@ const handlePreview = async (req, res, planCache) => {
 
         // --- Read current settings + sidecar (both READ-ONLY) ---
         const currentSettings = await getSettings(type);
-        const lastImport = await readLastImport(type);
+        const lastImport = await readLastImport(type, snapOpts);
 
         const currentSettingsHash = hashSettings(currentSettings);
 
@@ -368,6 +396,333 @@ const summarizePlanForResponse = (plan, { planId, type, currentSettingsHash }) =
     // having to reconstruct it from `diff`.
     imported:            plan.imported
 });
+
+// ---------------------------------------------------------------------------
+// Apply pipeline (Merge 3)
+// ---------------------------------------------------------------------------
+//
+// Contract:
+//   - Body: { planId: string }
+//   - 200: { applied: true, snapshotId, diffSummary, warnings? }
+//   - 400: malformed body (missing planId)
+//   - 409: planId expired / unknown           (PLAN_STALE)
+//   - 409: settings drifted and rebuilt plan would change the outcome
+//   - 500: write failure (settings untouched)
+//
+// Order of operations inside the importLockManager:
+//   1. load cached plan (throws PLAN_STALE on miss/expiry)
+//   2. re-read current settings; compare hash with cached hash
+//        if equal  -> keep the cached plan as-is
+//        if differs -> rebuild plan from cached records + fresh settings
+//                      if material outcome is identical -> use rebuilt plan
+//                      if material outcome differs      -> 409 (PLAN_STALE)
+//   3. snapshotManager.createSnapshot(type, 'pre-import-apply')
+//   4. settingsService.updateSettings(type, mutator)
+//        mutator replaces only the 4 importable fields; allowedCountries
+//        and any unknown top-level keys are preserved (see importApplier).
+//   5. snapshotManager.writeLastImport(type, nextLastImport)
+//        best-effort; a failure here is recoverable and logged but does
+//        NOT roll the settings write back (settings already on disk).
+//   6. snapshotManager.pruneSnapshots(type, 10)
+//        best-effort; failures are logged.
+//   7. planCache.delete(planId)                - eager removal after success
+
+const handleApply = async (req, res, planCache, snapOpts) => {
+    const type = req.params.type;
+    const started = Date.now();
+    console.log(`[settingsImport] apply started type=${type}`);
+
+    const planId = req.body?.planId;
+    if (typeof planId !== 'string' || planId === '') {
+        return respondError(res, 400, {
+            code: 'MISSING_PLAN_ID',
+            message: 'Request body must be JSON with a "planId" string.'
+        });
+    }
+
+    try {
+        const result = await runLocked(type, async () => {
+            // 1. Retrieve cached plan (throws PLAN_STALE if missing/expired).
+            const cached = planCache.getOrThrow(planId);
+
+            if (cached.type !== type) {
+                throw new ImportError(
+                    ERR.PLAN_STALE,
+                    `Plan ${planId} was generated for type=${cached.type}, not ${type}.`,
+                    { planId, expectedType: cached.type, actualType: type }
+                );
+            }
+
+            // 2. Staleness check + silent rebuild.
+            const currentSettings = await getSettings(type);
+            const currentHash = hashSettings(currentSettings);
+
+            let planToApply = cached.plan;
+            let rebuilt = false;
+            if (currentHash !== cached.currentSettingsHash) {
+                console.warn(
+                    `[settingsImport] settings hash changed between preview and apply ` +
+                    `(planId=${planId}, cached=${cached.currentSettingsHash.slice(0, 8)}, ` +
+                    `current=${currentHash.slice(0, 8)}). Attempting silent rebuild.`
+                );
+                const lastImport = await readLastImport(type, snapOpts);
+                const rebuiltPlan = buildPlan({
+                    currentSettings,
+                    lastImport,
+                    analyst: cached.analystRecords,
+                    vip:     cached.vipRecords,
+                    mode:    type,
+                    counts:  cached.plan.counts,
+                    warnings: cached.plan.warnings
+                });
+
+                if (!materiallyEquivalent(cached.plan, rebuiltPlan)) {
+                    throw new ImportError(
+                        ERR.PLAN_STALE,
+                        'Settings changed between preview and apply and the rebuilt plan ' +
+                        'differs materially. Please re-run preview.',
+                        { planId }
+                    );
+                }
+                planToApply = rebuiltPlan;
+                rebuilt = true;
+            }
+
+            // 3. Snapshot BEFORE any write.
+            const snapshotId = await createSnapshot(type, 'pre-import-apply', snapOpts);
+
+            // 4. Apply via settingsService (atomic, queued, cache-refreshed).
+            const prevLastImport = await readLastImport(type, snapOpts);
+            let nextLastImport = null;
+            await updateSettings(type, (settings) => {
+                const { nextSettings, nextLastImport: sidecarNext } = applierApply(
+                    settings,
+                    planToApply.imported,
+                    prevLastImport,
+                    { mode: type }
+                );
+                // Mutate the settings object in place so updateSettings'
+                // atomic write persists the new content. We must clear keys
+                // that might have been removed (unknown today but forward-safe).
+                for (const k of Object.keys(settings)) {
+                    if (!(k in nextSettings)) delete settings[k];
+                }
+                Object.assign(settings, nextSettings);
+                nextLastImport = sidecarNext;
+            });
+
+            // 5. Sidecar write (best-effort; recoverable on failure).
+            let sidecarWarning = null;
+            try {
+                await writeLastImport(type, nextLastImport, snapOpts);
+            } catch (err) {
+                console.error(
+                    `[settingsImport] sidecar write FAILED after successful apply ` +
+                    `(type=${type}, snapshotId=${snapshotId}): ${err.message}. ` +
+                    `Settings are correct; next preview may re-propose imported entries as new.`
+                );
+                sidecarWarning = 'sidecar-out-of-sync';
+            }
+
+            // 6. Retention pruning (best-effort).
+            try {
+                await pruneSnapshots(type, SNAPSHOT_RETENTION, snapOpts);
+            } catch (err) {
+                console.warn(`[settingsImport] snapshot prune failed: ${err.message}`);
+            }
+
+            return { snapshotId, rebuilt, sidecarWarning, plan: planToApply };
+        });
+
+        // 7. Eager cache removal AFTER successful apply (outside the lock).
+        planCache.delete(planId);
+
+        const diffSummary = buildDiffSummary(result.plan);
+        const ms = Date.now() - started;
+        console.log(
+            `[settingsImport] apply generated type=${type} planId=${planId} ` +
+            `snapshotId=${result.snapshotId} rebuilt=${result.rebuilt} took=${ms}ms`
+        );
+
+        const body = {
+            applied: true,
+            snapshotId: result.snapshotId,
+            diffSummary
+        };
+        if (result.rebuilt) body.rebuilt = true;
+        if (result.sidecarWarning) body.warnings = [result.sidecarWarning];
+        return res.status(200).json(body);
+    } catch (err) {
+        if (err instanceof ImportError) {
+            return respondImportErrorFromApply(res, err);
+        }
+        throw err;
+    }
+};
+
+/**
+ * Determine whether two plans produce the same on-disk outcome. We compare
+ * the canonical-JSON of the `imported` section only: that is what the
+ * applier writes; counts / warnings / generatedAt can differ without
+ * affecting the settings result.
+ */
+const materiallyEquivalent = (planA, planB) => {
+    return canonicalJson(planA.imported) === canonicalJson(planB.imported);
+};
+
+/**
+ * Extract a small, UI-friendly summary from the plan's diff. Used in both
+ * apply responses (where the full plan is not returned) and in logs.
+ */
+const buildDiffSummary = (plan) => {
+    const d = plan.diff || {};
+    return {
+        excludedEmails: {
+            add:       (d.excludedEmails?.add || []).length,
+            remove:    (d.excludedEmails?.remove || []).length,
+            unchanged:  d.excludedEmails?.unchanged ?? 0
+        },
+        vipUsers: {
+            add:       (d.vipUsers?.add || []).length,
+            remove:    (d.vipUsers?.remove || []).length,
+            changed:   (d.vipUsers?.changed || []).length,
+            unchanged:  d.vipUsers?.unchanged ?? 0
+        },
+        emailTimeZoneMappings: {
+            add:       Object.keys(d.emailTimeZoneMappings?.add || {}).length,
+            changed:   Object.keys(d.emailTimeZoneMappings?.changed || {}).length,
+            remove:    (d.emailTimeZoneMappings?.remove || []).length,
+            unchanged:  d.emailTimeZoneMappings?.unchanged ?? 0
+        },
+        emailCountries: {
+            add:       (d.emailCountries?.add || []).length,
+            remove:    (d.emailCountries?.remove || []).length,
+            changed:   (d.emailCountries?.changed || []).length,
+            unchanged:  d.emailCountries?.unchanged ?? 0
+        }
+    };
+};
+
+const respondImportErrorFromApply = (res, err) => {
+    // PLAN_STALE -> 409; everything else -> 400 with code
+    const status = err.code === ERR.PLAN_STALE ? 409 : 400;
+    console.warn(`[settingsImport] apply rejected code=${err.code} status=${status} ${err.message}`);
+    return res.status(status).json({
+        error: { code: err.code, message: err.message, details: err.details }
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Snapshots list (Merge 3)
+// ---------------------------------------------------------------------------
+
+const handleListSnapshots = async (req, res, snapOpts) => {
+    const type = req.params.type;
+    const snaps = await listSnapshots(type, snapOpts);
+    return res.status(200).json({
+        snapshots: snaps.map(s => ({
+            id: s.id,
+            createdAt: s.createdAt,
+            reason: s.reason,
+            size: s.size
+        }))
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Rollback (Merge 3)
+// ---------------------------------------------------------------------------
+//
+// Contract:
+//   - Body: { snapshotId: string }
+//   - 200: { restored: true, newSnapshotId }
+//   - 400: malformed body
+//   - 404: snapshot not found / invalid id for this type
+//   - 500: snapshot corrupt / write failure
+//
+// Order of operations inside the importLockManager:
+//   1. resolve + parse snapshot (throws on not-found / corrupt)
+//   2. snapshotManager.createSnapshot(type, 'pre-rollback')
+//   3. settingsService.updateSettings(type, mutator) that rewrites settings
+//      to the snapshotted content (wipe unknown keys, then Object.assign).
+//   4. settingsService.invalidateCache(type)  - defensive refresh
+//   5. snapshotManager.pruneSnapshots(type, 10)
+//
+// Explicitly: the lastImport sidecar is NOT restored. Per the blueprint,
+// rolling back settings only leaves the sidecar "ahead" of settings; the
+// next preview will correctly propose re-adding imported-but-now-absent
+// entries. This matches operator intent: "roll back, then decide whether
+// to re-import."
+
+const handleRollback = async (req, res, snapOpts) => {
+    const type = req.params.type;
+    const started = Date.now();
+    console.log(`[settingsImport] rollback started type=${type}`);
+
+    const snapshotId = req.body?.snapshotId;
+    if (typeof snapshotId !== 'string' || snapshotId === '') {
+        return respondError(res, 400, {
+            code: 'MISSING_SNAPSHOT_ID',
+            message: 'Request body must be JSON with a "snapshotId" string.'
+        });
+    }
+
+    try {
+        const result = await runLocked(type, async () => {
+            // 1. Resolve + parse the snapshot (tier 1 errors thrown as ImportError).
+            const restored = await readSnapshot(type, snapshotId, snapOpts);
+
+            // 2. Snapshot the CURRENT state before overwriting.
+            const newSnapshotId = await createSnapshot(type, 'pre-rollback', snapOpts);
+
+            // 3. Restore via updateSettings (atomic + queued + cache-refreshed).
+            await updateSettings(type, (settings) => {
+                for (const k of Object.keys(settings)) delete settings[k];
+                Object.assign(settings, restored);
+            });
+
+            // 4. Defensive cache invalidation - updateSettings already refreshes
+            //    its own cache, but if the rollback payload came from disk
+            //    (e.g. an operator edited the snapshot file), this guarantees
+            //    the next read goes through disk.
+            invalidateCache(type);
+
+            // 5. Retention pruning (best-effort).
+            try {
+                await pruneSnapshots(type, SNAPSHOT_RETENTION, snapOpts);
+            } catch (err) {
+                console.warn(`[settingsImport] snapshot prune failed: ${err.message}`);
+            }
+
+            return { newSnapshotId };
+        });
+
+        const ms = Date.now() - started;
+        console.log(
+            `[settingsImport] rollback applied type=${type} snapshotId=${snapshotId} ` +
+            `newSnapshotId=${result.newSnapshotId} took=${ms}ms`
+        );
+        return res.status(200).json({
+            restored: true,
+            newSnapshotId: result.newSnapshotId
+        });
+    } catch (err) {
+        if (err instanceof ImportError) {
+            return respondImportErrorFromRollback(res, err);
+        }
+        throw err;
+    }
+};
+
+const respondImportErrorFromRollback = (res, err) => {
+    let status = 400;
+    if (err.code === ERR.SNAPSHOT_NOT_FOUND) status = 404;
+    if (err.code === ERR.SNAPSHOT_CORRUPT)   status = 500;
+    console.warn(`[settingsImport] rollback rejected code=${err.code} status=${status} ${err.message}`);
+    return res.status(status).json({
+        error: { code: err.code, message: err.message, details: err.details }
+    });
+};
 
 // ---------------------------------------------------------------------------
 // Default export - used by app.js
