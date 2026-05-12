@@ -16,6 +16,7 @@
       "Email": "carlos.maltez@siemens-healthineers.com",
       "Country": "BR"
     },
+    {},
     {
       "Email": "julio.ribeiro@siemens-healthineers.com",
       "Country": "BR"
@@ -167,7 +168,8 @@
     "lazarooscarfranco.zumbay.ext@siemens-healthineers.com",
     "lopez.jorge.ext@siemens-healthineers.com",
     "miguel.gutierrez.ext@siemens-healthineers.com",
-    "paul.nunez.ext@siemens-healthineers.com"
+    "paul.nunez.ext@siemens-healthineers.com",
+    "paul.nunez2.ext@siemens-healthineers.com"
   ],
   "allowedCountries": [
     "SV",

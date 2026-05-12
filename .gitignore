@@ -9,6 +9,9 @@ npm-debug.log*
 uploads/
 *.tmp
 
+# Import sidecar state (operator-specific, never committed)
+config/imports/
+
 # Regression harness - regenerated from tests/fixtures/tickets.json
 tests/fixtures/input.xlsx
 

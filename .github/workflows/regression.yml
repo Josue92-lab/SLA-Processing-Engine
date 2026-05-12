@@ -98,3 +98,11 @@ jobs:
         env:
           TZ: US/Central
         run: npm run test:regression
+
+      - name: Run import-layer unit tests
+        # Pure modules under services/imports/ plus filesystem-scoped tests
+        # for snapshots and the lock manager. These do NOT touch the SLA
+        # engine; they exist to gate changes to the import layer itself.
+        # See .kiro/steering/import-based-settings-v1-blueprint.md for the
+        # V1 Import-Assisted Settings Sync design these tests defend.
+        run: npm run test:imports

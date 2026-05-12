@@ -217,7 +217,8 @@
     {
       "Email": "paul.nunez.ext@siemens-healthineers.com",
       "Country": "PE"
-    }
+    },
+    {}
   ],
   "allowedCountries": [
     "SV",
