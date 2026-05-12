@@ -1,0 +1,661 @@
+<%
+/*
+ * Import-assisted settings sync - UI panel (Merge 4).
+ *
+ * Rendered by views/settings.ejs via:
+ *   <%- include('partials/importPanel') %>
+ *
+ * All runtime behavior is vanilla JS (fetch). No build step, no client
+ * dependencies beyond what the settings page already loads (jQuery is used
+ * for the existing CRUD; this panel does NOT depend on it).
+ *
+ * Removable in a single delta: delete the include from settings.ejs and this
+ * file; nothing else needs to change. The server-side routes remain wired
+ * (they are harmless no-ops without a caller).
+ *
+ * Server-rendered HTML here is static scaffolding ONLY. All preview /
+ * snapshot data is fetched as JSON and rendered client-side via textContent
+ * to avoid injecting untrusted strings into the DOM as HTML.
+ */
+%>
+<section id="importPanel" class="import-panel" aria-labelledby="importPanelTitle">
+    <h2 id="importPanelTitle">Import from system exports</h2>
+    <p class="import-panel__intro">
+        Upload the Analyst and VIP exports to synchronize this mode's settings
+        from the operational source system. Manual entries added below
+        remain untouched.
+        <span class="import-panel__mode">Mode: <strong id="importMode">external</strong></span>
+    </p>
+
+    <!-- SECTION 1: upload + preview -->
+    <div class="import-panel__section" id="importUploadSection">
+        <form id="importForm" class="import-panel__form">
+            <div class="form-group">
+                <label for="importAnalystFile">Analyst export (.xlsx)</label>
+                <input type="file" id="importAnalystFile" name="analystFile"
+                       accept=".xlsx" required>
+            </div>
+            <div class="form-group">
+                <label for="importVipFile">VIP export (.xlsx)</label>
+                <input type="file" id="importVipFile" name="vipFile"
+                       accept=".xlsx" required>
+            </div>
+            <div class="import-panel__actions">
+                <button type="submit" id="importPreviewBtn">Preview import</button>
+                <span id="importStatus" class="import-panel__status" aria-live="polite"></span>
+            </div>
+        </form>
+        <div id="importError" class="import-panel__error" role="alert" hidden></div>
+    </div>
+
+    <!-- SECTION 2: preview results -->
+    <div class="import-panel__section" id="importPreviewSection" hidden>
+        <h3>Preview</h3>
+        <p id="importPreviewCounts" class="import-panel__counts"></p>
+
+        <div class="import-panel__sanity" id="importSanityFlags" hidden></div>
+
+        <ul class="import-panel__diff" id="importDiff"></ul>
+
+        <details class="import-panel__warnings" id="importWarningsWrapper" hidden>
+            <summary>
+                Warnings <span id="importWarningsCount">(0)</span>
+            </summary>
+            <ul id="importWarnings"></ul>
+        </details>
+
+        <div class="import-panel__actions">
+            <button type="button" id="importCancelBtn">Cancel</button>
+            <button type="button" id="importApplyBtn" disabled>Apply import</button>
+            <span id="importApplyStatus" class="import-panel__status" aria-live="polite"></span>
+        </div>
+        <div id="importApplyError" class="import-panel__error" role="alert" hidden></div>
+    </div>
+
+    <!-- SECTION 3: snapshots -->
+    <div class="import-panel__section" id="importSnapshotsSection">
+        <h3>
+            Recent snapshots
+            <button type="button" id="importSnapshotsRefreshBtn"
+                    class="import-panel__link-btn">refresh</button>
+        </h3>
+        <div id="importSnapshotsEmpty" class="import-panel__hint">No snapshots yet.</div>
+        <table class="import-panel__snapshots" id="importSnapshotsTable" hidden>
+            <thead>
+                <tr>
+                    <th>Created</th>
+                    <th>Reason</th>
+                    <th>Size</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="importSnapshotsBody"></tbody>
+        </table>
+        <div id="importSnapshotsError" class="import-panel__error" role="alert" hidden></div>
+        <span id="importSnapshotsStatus" class="import-panel__status" aria-live="polite"></span>
+    </div>
+</section>
+
+<style>
+    /*
+     * Scoped styles. Prefixed with `.import-panel` (BEM-ish) to avoid any
+     * collision with the existing CRUD controls below. Uses only CSS that
+     * works in a plain browser with no preprocessor.
+     */
+    .import-panel {
+        border: 1px solid #dcdcdc;
+        border-radius: 4px;
+        padding: 20px;
+        margin-bottom: 30px;
+        background: #fafafa;
+    }
+    .import-panel h2 { margin-top: 0; }
+    .import-panel__intro {
+        margin: 0 0 16px 0;
+        color: #555;
+    }
+    .import-panel__mode {
+        float: right;
+        color: #333;
+    }
+    .import-panel__section {
+        margin-top: 20px;
+        padding-top: 12px;
+        border-top: 1px solid #ececec;
+    }
+    .import-panel__section:first-of-type {
+        border-top: 0;
+        padding-top: 0;
+    }
+    .import-panel__form .form-group {
+        margin-bottom: 10px;
+    }
+    .import-panel__form label {
+        display: inline-block;
+        min-width: 170px;
+    }
+    .import-panel__actions {
+        margin-top: 10px;
+    }
+    .import-panel__actions button {
+        margin-right: 8px;
+    }
+    .import-panel__status {
+        font-style: italic;
+        color: #666;
+        margin-left: 8px;
+    }
+    .import-panel__error {
+        color: #a40000;
+        background: #fde8e8;
+        border: 1px solid #f2bfbf;
+        padding: 8px 12px;
+        border-radius: 3px;
+        margin-top: 10px;
+        white-space: pre-wrap;
+    }
+    .import-panel__diff {
+        list-style: none;
+        padding: 0;
+        font-family: "Lucida Console", Monaco, monospace;
+    }
+    .import-panel__diff li {
+        padding: 4px 0;
+        border-bottom: 1px dashed #eee;
+    }
+    .import-panel__diff .diff-add    { color: #1a7f37; }
+    .import-panel__diff .diff-remove { color: #a40000; }
+    .import-panel__diff .diff-change { color: #9a6700; }
+    .import-panel__diff .diff-label {
+        display: inline-block;
+        min-width: 200px;
+        color: #333;
+    }
+    .import-panel__sanity {
+        background: #fff4ce;
+        border: 1px solid #e0c97a;
+        color: #663d00;
+        padding: 8px 12px;
+        border-radius: 3px;
+        margin-bottom: 10px;
+    }
+    .import-panel__warnings {
+        margin: 12px 0;
+    }
+    .import-panel__warnings ul {
+        max-height: 220px;
+        overflow-y: auto;
+        background: #fff;
+        border: 1px solid #ececec;
+        padding: 8px 24px;
+        margin: 8px 0 0 0;
+    }
+    .import-panel__snapshots {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+    }
+    .import-panel__snapshots th,
+    .import-panel__snapshots td {
+        text-align: left;
+        padding: 6px 8px;
+        border-bottom: 1px solid #ececec;
+        font-size: 0.95em;
+    }
+    .import-panel__snapshots th {
+        background: #f0f0f0;
+    }
+    .import-panel__hint {
+        color: #888;
+        font-style: italic;
+    }
+    .import-panel__link-btn {
+        background: transparent;
+        border: none;
+        color: #00B7FF;
+        cursor: pointer;
+        font-size: 0.9em;
+        padding: 0 4px;
+    }
+    .import-panel__link-btn:hover {
+        text-decoration: underline;
+    }
+</style>
+
+<script>
+(function () {
+    'use strict';
+
+    /*
+     * The panel is a self-contained IIFE so it cannot collide with the
+     * existing jQuery CRUD globals (addExcludedEmail, etc.). The only
+     * cross-module coupling is reading the `#configType` <select> so we
+     * follow the same "external/internal" mode the operator is editing.
+     */
+
+    // ---- DOM refs (all optional; panel no-ops if anything is missing) ----
+    const $ = (id) => document.getElementById(id);
+    const form             = $('importForm');
+    const analystInput     = $('importAnalystFile');
+    const vipInput         = $('importVipFile');
+    const previewBtn       = $('importPreviewBtn');
+    const previewStatus    = $('importStatus');
+    const previewError     = $('importError');
+    const previewSection   = $('importPreviewSection');
+    const previewCounts    = $('importPreviewCounts');
+    const diffList         = $('importDiff');
+    const sanityFlags      = $('importSanityFlags');
+    const warningsWrapper  = $('importWarningsWrapper');
+    const warningsList     = $('importWarnings');
+    const warningsCount    = $('importWarningsCount');
+    const applyBtn         = $('importApplyBtn');
+    const applyStatus      = $('importApplyStatus');
+    const applyError       = $('importApplyError');
+    const cancelBtn        = $('importCancelBtn');
+    const snapshotsTable   = $('importSnapshotsTable');
+    const snapshotsBody    = $('importSnapshotsBody');
+    const snapshotsEmpty   = $('importSnapshotsEmpty');
+    const snapshotsError   = $('importSnapshotsError');
+    const snapshotsStatus  = $('importSnapshotsStatus');
+    const snapshotsRefresh = $('importSnapshotsRefreshBtn');
+    const modeLabel        = $('importMode');
+
+    if (!form) return; // partial not included; nothing to wire.
+
+    /**
+     * Resolve the current mode from the existing page-level selector
+     * (#configType). Falls back to 'external'. Re-reads on every action so
+     * the panel always targets the same type the operator is viewing.
+     */
+    const getMode = () => {
+        const sel = document.getElementById('configType');
+        const v = sel && sel.value;
+        return v === 'internal' ? 'internal' : 'external';
+    };
+
+    // Mirror the mode label into the panel header and keep it updated when
+    // the operator flips the global selector.
+    const syncModeLabel = () => { if (modeLabel) modeLabel.textContent = getMode(); };
+    const configTypeEl = document.getElementById('configType');
+    if (configTypeEl) {
+        configTypeEl.addEventListener('change', () => {
+            syncModeLabel();
+            // Changing mode invalidates any cached preview; reset UI.
+            resetPreview();
+            loadSnapshots();
+        });
+    }
+    syncModeLabel();
+
+    // Plan currently staged for apply. Null after reset or after apply.
+    let currentPlanId = null;
+
+    // ------------------------------------------------------------------
+    // UI helpers
+    // ------------------------------------------------------------------
+
+    const setHidden = (el, hidden) => { if (el) el.hidden = !!hidden; };
+    const setText = (el, text) => { if (el) el.textContent = text; };
+    const showError = (el, text) => { setText(el, text); setHidden(el, false); };
+    const clearError = (el) => { setText(el, ''); setHidden(el, true); };
+
+    const setBusy = (btn, busy) => {
+        if (!btn) return;
+        btn.disabled = !!busy;
+        if (busy) btn.setAttribute('aria-busy', 'true');
+        else btn.removeAttribute('aria-busy');
+    };
+
+    const resetPreview = () => {
+        currentPlanId = null;
+        setHidden(previewSection, true);
+        setText(previewStatus, '');
+        clearError(previewError);
+        clearError(applyError);
+        setText(applyStatus, '');
+        if (applyBtn) applyBtn.disabled = true;
+        if (diffList) diffList.innerHTML = '';
+        if (warningsList) warningsList.innerHTML = '';
+        setHidden(warningsWrapper, true);
+        setHidden(sanityFlags, true);
+        setText(sanityFlags, '');
+    };
+
+    // ------------------------------------------------------------------
+    // Server interactions (fetch-based)
+    // ------------------------------------------------------------------
+
+    /**
+     * Parse the response into { status, body }. Body may be JSON or, on
+     * unexpected server errors, a string. Network errors surface as
+     * { status: 0, body: { error: { code: 'NETWORK', message } } }.
+     */
+    const send = async (url, opts = {}) => {
+        let res;
+        try {
+            res = await fetch(url, opts);
+        } catch (err) {
+            return { status: 0, body: { error: { code: 'NETWORK', message: err.message } } };
+        }
+        const text = await res.text();
+        let body;
+        try { body = text ? JSON.parse(text) : null; }
+        catch { body = { error: { code: 'NON_JSON_RESPONSE', message: text || res.statusText } }; }
+        return { status: res.status, body };
+    };
+
+    const formatError = (body) => {
+        if (!body) return 'Unknown error.';
+        const err = body.error || body;
+        const parts = [];
+        if (err.code) parts.push('[' + err.code + ']');
+        if (err.message) parts.push(err.message);
+        // Surface detailed sub-errors from VALIDATION_FAILED payloads.
+        if (err.details && Array.isArray(err.details.errors)) {
+            for (const sub of err.details.errors) {
+                parts.push('  - [' + sub.code + '] ' + sub.message);
+            }
+        } else if (err.details && err.details.missing) {
+            parts.push('  missing: ' + err.details.missing.join(', '));
+        }
+        return parts.join('\n');
+    };
+
+    // ------------------------------------------------------------------
+    // Preview
+    // ------------------------------------------------------------------
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        resetPreview();
+
+        const analyst = analystInput && analystInput.files && analystInput.files[0];
+        const vip     = vipInput && vipInput.files && vipInput.files[0];
+        if (!analyst || !vip) {
+            showError(previewError, 'Both Analyst and VIP xlsx files are required.');
+            return;
+        }
+
+        const mode = getMode();
+        const fd = new FormData();
+        fd.append('analystFile', analyst);
+        fd.append('vipFile',     vip);
+
+        setBusy(previewBtn, true);
+        setText(previewStatus, 'Previewing...');
+
+        const { status, body } = await send(
+            '/api/settings/' + encodeURIComponent(mode) + '/import/preview',
+            { method: 'POST', body: fd }
+        );
+
+        setBusy(previewBtn, false);
+        setText(previewStatus, '');
+
+        if (status !== 200) {
+            showError(previewError, formatError(body));
+            return;
+        }
+
+        renderPreview(body);
+    });
+
+    cancelBtn.addEventListener('click', () => { resetPreview(); });
+
+    /**
+     * Render the preview payload into the DOM. All user content goes through
+     * textContent; no innerHTML with untrusted data.
+     */
+    const renderPreview = (plan) => {
+        currentPlanId = plan.planId;
+
+        // Counts line
+        const ac = plan.counts && plan.counts.analyst || {};
+        const vc = plan.counts && plan.counts.vip || {};
+        setText(previewCounts,
+            'Analyst: ' + (ac.parsed || 0) + ' parsed / ' + (ac.kept || 0) + ' kept.  ' +
+            'VIP: '     + (vc.parsed || 0) + ' parsed / ' + (vc.kept || 0) + ' kept.');
+
+        // Diff lines
+        if (diffList) diffList.innerHTML = '';
+        appendStringDiff(diffList, 'Excluded emails:', plan.diff && plan.diff.excludedEmails);
+        appendObjectDiff(diffList, 'VIP users:',      plan.diff && plan.diff.vipUsers);
+        appendMapDiff(diffList,    'Timezone mappings:', plan.diff && plan.diff.emailTimeZoneMappings);
+        appendObjectDiff(diffList, 'Email countries:', plan.diff && plan.diff.emailCountries);
+
+        // Warnings
+        if (warningsList) warningsList.innerHTML = '';
+        const warnings = plan.warnings || [];
+        setText(warningsCount, '(' + warnings.length + ')');
+        if (warnings.length) {
+            setHidden(warningsWrapper, false);
+            for (const w of warnings) {
+                const li = document.createElement('li');
+                li.textContent = w;
+                warningsList.appendChild(li);
+            }
+        }
+
+        // Sanity flags (banner, but NOT blocking)
+        const flags = plan.sanityFlags || {};
+        const flagParts = [];
+        if (flags.largeShrink) flagParts.push('Large shrink (>20%) detected in at least one list.');
+        if (flags.largeChurn)  flagParts.push('Large churn (>50%) detected in at least one list.');
+        if (flagParts.length) {
+            setText(sanityFlags, 'Sanity check: ' + flagParts.join(' '));
+            setHidden(sanityFlags, false);
+        } else {
+            setHidden(sanityFlags, true);
+        }
+
+        // Reveal + enable apply
+        setHidden(previewSection, false);
+        if (applyBtn) applyBtn.disabled = false;
+        clearError(applyError);
+        setText(applyStatus, '');
+    };
+
+    const appendStringDiff = (container, label, d) => {
+        if (!container) return;
+        d = d || { add: [], remove: [], unchanged: 0 };
+        const li = document.createElement('li');
+        const lbl = document.createElement('span');
+        lbl.className = 'diff-label';
+        lbl.textContent = label;
+        li.appendChild(lbl);
+        appendCount(li, '+', d.add && d.add.length, 'diff-add');
+        appendCount(li, '-', d.remove && d.remove.length, 'diff-remove');
+        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        container.appendChild(li);
+    };
+
+    const appendObjectDiff = (container, label, d) => {
+        if (!container) return;
+        d = d || { add: [], remove: [], changed: [], unchanged: 0 };
+        const li = document.createElement('li');
+        const lbl = document.createElement('span');
+        lbl.className = 'diff-label';
+        lbl.textContent = label;
+        li.appendChild(lbl);
+        appendCount(li, '+', d.add && d.add.length, 'diff-add');
+        appendCount(li, '~', d.changed && d.changed.length, 'diff-change');
+        appendCount(li, '-', d.remove && d.remove.length, 'diff-remove');
+        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        container.appendChild(li);
+    };
+
+    const appendMapDiff = (container, label, d) => {
+        if (!container) return;
+        d = d || { add: {}, changed: {}, remove: [], unchanged: 0 };
+        const li = document.createElement('li');
+        const lbl = document.createElement('span');
+        lbl.className = 'diff-label';
+        lbl.textContent = label;
+        li.appendChild(lbl);
+        appendCount(li, '+', Object.keys(d.add || {}).length, 'diff-add');
+        appendCount(li, '~', Object.keys(d.changed || {}).length, 'diff-change');
+        appendCount(li, '-', (d.remove || []).length, 'diff-remove');
+        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        container.appendChild(li);
+    };
+
+    const appendCount = (container, sign, n, cls) => {
+        const span = document.createElement('span');
+        span.className = cls;
+        span.textContent = sign + (n || 0) + '  ';
+        container.appendChild(span);
+    };
+
+    // ------------------------------------------------------------------
+    // Apply
+    // ------------------------------------------------------------------
+
+    applyBtn.addEventListener('click', async () => {
+        if (!currentPlanId) return;
+        clearError(applyError);
+        setText(applyStatus, 'Applying...');
+        setBusy(applyBtn, true);
+        setBusy(cancelBtn, true);
+
+        const mode = getMode();
+        const { status, body } = await send(
+            '/api/settings/' + encodeURIComponent(mode) + '/import/apply',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ planId: currentPlanId })
+            }
+        );
+
+        setBusy(applyBtn, false);
+        setBusy(cancelBtn, false);
+        setText(applyStatus, '');
+
+        if (status === 200 && body && body.applied) {
+            // Clear preview state, refresh snapshots, reload the page so the
+            // existing CRUD lists below also reflect the new state.
+            resetPreview();
+            await loadSnapshots();
+            // Hard reload to re-render CRUD lists from fresh settings.
+            // This is intentional: the existing jQuery CRUD has no event bus
+            // to listen on, and a reload is the least-invasive refresh.
+            window.location.reload();
+            return;
+        }
+
+        // Failure path - render inline.
+        if (status === 409) {
+            showError(applyError, 'Plan is stale or has expired. Please re-run Preview.\n' + formatError(body));
+            // Disable apply until next preview.
+            currentPlanId = null;
+            if (applyBtn) applyBtn.disabled = true;
+            return;
+        }
+        showError(applyError, formatError(body) + '\n(HTTP ' + status + ')');
+    });
+
+    // ------------------------------------------------------------------
+    // Snapshots
+    // ------------------------------------------------------------------
+
+    const loadSnapshots = async () => {
+        clearError(snapshotsError);
+        setText(snapshotsStatus, 'Loading...');
+        const mode = getMode();
+        const { status, body } = await send(
+            '/api/settings/' + encodeURIComponent(mode) + '/import/snapshots'
+        );
+        setText(snapshotsStatus, '');
+        if (status !== 200) {
+            showError(snapshotsError, formatError(body));
+            setHidden(snapshotsTable, true);
+            setHidden(snapshotsEmpty, false);
+            return;
+        }
+        renderSnapshots(body.snapshots || []);
+    };
+
+    const renderSnapshots = (items) => {
+        if (!snapshotsBody) return;
+        snapshotsBody.innerHTML = '';
+        if (items.length === 0) {
+            setHidden(snapshotsTable, true);
+            setHidden(snapshotsEmpty, false);
+            return;
+        }
+        setHidden(snapshotsEmpty, true);
+        setHidden(snapshotsTable, false);
+        for (const s of items) {
+            const tr = document.createElement('tr');
+
+            const tdCreated = document.createElement('td');
+            tdCreated.textContent = formatTs(s.createdAt);
+            tr.appendChild(tdCreated);
+
+            const tdReason = document.createElement('td');
+            tdReason.textContent = s.reason || '';
+            tr.appendChild(tdReason);
+
+            const tdSize = document.createElement('td');
+            tdSize.textContent = formatSize(s.size);
+            tr.appendChild(tdSize);
+
+            const tdAct = document.createElement('td');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = 'Rollback';
+            btn.addEventListener('click', () => rollbackSnapshot(s.id));
+            tdAct.appendChild(btn);
+            tr.appendChild(tdAct);
+
+            snapshotsBody.appendChild(tr);
+        }
+    };
+
+    const formatTs = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+    };
+
+    const formatSize = (bytes) => {
+        if (typeof bytes !== 'number') return '';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+    };
+
+    const rollbackSnapshot = async (snapshotId) => {
+        const ok = window.confirm(
+            'Roll back settings to snapshot:\n\n' + snapshotId +
+            '\n\nThe import sidecar will NOT be restored; the page will reload. Proceed?'
+        );
+        if (!ok) return;
+
+        clearError(snapshotsError);
+        setText(snapshotsStatus, 'Rolling back...');
+        const mode = getMode();
+        const { status, body } = await send(
+            '/api/settings/' + encodeURIComponent(mode) + '/import/rollback',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ snapshotId: snapshotId })
+            }
+        );
+        setText(snapshotsStatus, '');
+        if (status === 200 && body && body.restored) {
+            window.location.reload();
+            return;
+        }
+        showError(snapshotsError, formatError(body) + '\n(HTTP ' + status + ')');
+    };
+
+    snapshotsRefresh.addEventListener('click', () => loadSnapshots());
+
+    // Load the snapshot list once on panel init. Subsequent loads happen on
+    // mode change, manual refresh, and after a successful apply.
+    loadSnapshots();
+})();
+</script>
