@@ -346,17 +346,14 @@ test('preview: same email with EXE and OSE across files produces CROSS_FILE_USER
     }
 });
 
-test('preview: apply/rollback/snapshots return 501 NOT_IMPLEMENTED', async () => {
-    const apply    = await postJson(`${server.baseUrl}/api/settings/external/import/apply`,    { planId: 'x' });
-    const rollback = await postJson(`${server.baseUrl}/api/settings/external/import/rollback`, { snapshotId: 'x' });
-    const snaps    = await getJson(`${server.baseUrl}/api/settings/external/import/snapshots`);
-    assert.equal(apply.status, 501);
-    assert.equal(apply.body.error.code, 'NOT_IMPLEMENTED');
-    assert.equal(rollback.status, 501);
-    assert.equal(rollback.body.error.code, 'NOT_IMPLEMENTED');
-    assert.equal(snaps.status, 501);
-    assert.equal(snaps.body.error.code, 'NOT_IMPLEMENTED');
-});
+// NOTE: A former test in this file asserted that apply/rollback/snapshots
+// returned 501 NOT_IMPLEMENTED. That reflected Merge 2 of the staged rollout
+// in .kiro/steering/import-based-settings-v1-blueprint.md §12, where only
+// /preview was live. Merge 3 implemented those three endpoints fully, and
+// their behavior is now exhaustively validated in settingsImport.apply.test.js
+// (happy paths, 400 shape errors, 409 PLAN_STALE, 404 SNAPSHOT_NOT_FOUND,
+// retention, concurrency, etc.). This file stays focused on preview-specific
+// contracts to keep each suite single-responsibility.
 
 test('preview: cached plan is retrievable by id until it expires', async () => {
     // Fresh server with a tiny TTL so we can observe expiration deterministically.

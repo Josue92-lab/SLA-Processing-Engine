@@ -1,11 +1,25 @@
 /**
  * HTTP router for the import-assisted settings sync.
  *
- * Merge 2 scope (see .kiro/steering/import-based-settings-v1-blueprint.md):
- *   - POST /api/settings/:type/import/preview   FULL IMPLEMENTATION
- *   - POST /api/settings/:type/import/apply     501 NOT IMPLEMENTED
- *   - POST /api/settings/:type/import/rollback  501 NOT IMPLEMENTED
- *   - GET  /api/settings/:type/import/snapshots 501 NOT IMPLEMENTED
+ * Current scope: Merges 1-4 of the staged rollout defined in
+ * .kiro/steering/import-based-settings-v1-blueprint.md §12. All four
+ * endpoints are fully implemented:
+ *
+ *   - POST /api/settings/:type/import/preview    read-only plan builder
+ *   - POST /api/settings/:type/import/apply      atomic apply under the
+ *                                                importLockManager, with
+ *                                                pre-import-apply snapshot
+ *                                                and sidecar update
+ *   - POST /api/settings/:type/import/rollback   restore a snapshot under
+ *                                                the importLockManager;
+ *                                                sidecar is NOT restored
+ *                                                (see blueprint §8)
+ *   - GET  /api/settings/:type/import/snapshots  newest-first list
+ *
+ * Historical note: Merge 2 shipped with apply/rollback/snapshots returning
+ * 501 NOT_IMPLEMENTED. Merge 3 (settingsImport.apply.test.js) replaced
+ * those stubs with the real handlers. Neither the 501 path nor a
+ * "preview-only" runtime mode still exists.
  *
  * Preview is strictly read-only:
  *   - reads projectSettings_<type>.json (via settingsService.getSettings)
@@ -220,15 +234,6 @@ const respondUnexpected = (res, err, op) => {
             code: 'INTERNAL_ERROR',
             message: 'An unexpected server error occurred. See server logs for details.',
             details: { op }
-        }
-    });
-};
-
-const notImplemented = (op) => (req, res) => {
-    res.status(501).json({
-        error: {
-            code: 'NOT_IMPLEMENTED',
-            message: `Import ${op} is not implemented yet (Merge 3).`
         }
     });
 };
