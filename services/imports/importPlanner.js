@@ -18,7 +18,7 @@
  *   5. Compute sanity flags for the UI (largeShrink / largeChurn).
  *
  * NO I/O, NO randomness, NO wall-clock reads unless the caller injects them.
- * The `planId` is produced by the HTTP layer (Merge 2+), not here.
+ * The `planId` is produced by the HTTP layer, not here.
  */
 
 import { ImportError, ERR } from './errors.js';

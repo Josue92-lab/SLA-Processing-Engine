@@ -1,7 +1,7 @@
 /**
  * In-memory plan cache for the two-stage preview -> apply flow.
  *
- * Semantics (v1 / Merge 2):
+ * Semantics (v1):
  *   - Plans are stored in a per-process Map. Server restart invalidates
  *     every plan. This is intentional (decision 16): persistence would
  *     trade away a safety property (stale state never applied) for a
@@ -12,10 +12,9 @@
  *   - Keys are UUID v4 strings produced by the caller and returned to
  *     the client as `planId`.
  *
- * Merge 3 will read the cached plan AND the cached rows (analystRecords
+ * The apply step reads the cached plan AND the cached rows (analystRecords
  * / vipRecords) to support the silent-rebuild staleness guard without
- * forcing the operator to re-upload. We store them here to avoid a
- * redesign when Merge 3 lands.
+ * forcing the operator to re-upload; both are stored here for that reason.
  *
  * The cache holds NO file contents - only already-parsed + normalized
  * in-memory structures. Uploaded .xlsx bytes never survive the preview
@@ -37,8 +36,8 @@ const SWEEP_INTERVAL_MS = 60 * 1000;
  * @property {string}  planId
  * @property {'external'|'internal'} type
  * @property {object}  plan                - the ImportPlan produced by importPlanner
- * @property {Array<object>} analystRecords - normalized rows (for Merge 3 rebuilds)
- * @property {Array<object>} vipRecords     - normalized rows (for Merge 3 rebuilds)
+ * @property {Array<object>} analystRecords - normalized rows (used by the apply silent-rebuild path)
+ * @property {Array<object>} vipRecords     - normalized rows (used by the apply silent-rebuild path)
  * @property {string}  currentSettingsHash - sha256 hex of the settings at preview time
  * @property {number}  createdAtMs
  * @property {number}  expiresAtMs

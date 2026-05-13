@@ -99,50 +99,6 @@ const postMultipart = async (url, files) => {
     });
 };
 
-const postJson = async (url, payload) => {
-    const u = new URL(url);
-    const body = Buffer.from(JSON.stringify(payload));
-    return await new Promise((resolve, reject) => {
-        const req = http.request({
-            hostname: u.hostname, port: u.port, path: u.pathname + u.search,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': body.length }
-        }, (res) => {
-            const chunks = [];
-            res.on('data', (c) => chunks.push(c));
-            res.on('end', () => {
-                const raw = Buffer.concat(chunks).toString('utf8');
-                let parsed;
-                try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = raw; }
-                resolve({ status: res.statusCode, body: parsed });
-            });
-        });
-        req.on('error', reject);
-        req.write(body);
-        req.end();
-    });
-};
-
-const getJson = async (url) => {
-    const u = new URL(url);
-    return await new Promise((resolve, reject) => {
-        const req = http.request({
-            hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET'
-        }, (res) => {
-            const chunks = [];
-            res.on('data', (c) => chunks.push(c));
-            res.on('end', () => {
-                const raw = Buffer.concat(chunks).toString('utf8');
-                let parsed;
-                try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = raw; }
-                resolve({ status: res.statusCode, body: parsed });
-            });
-        });
-        req.on('error', reject);
-        req.end();
-    });
-};
-
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 const readFile = (p) => fs.readFile(p);
