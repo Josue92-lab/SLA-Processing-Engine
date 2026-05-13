@@ -263,7 +263,12 @@ export const readLastImport = async (type, opts = {}) => {
     try {
         raw = await fs.readFile(filePath, 'utf8');
     } catch (err) {
-        if (err.code === 'ENOENT') return emptyLastImport();
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR' || err.code === 'EISDIR') {
+            if (err.code !== 'ENOENT') {
+                console.warn(`[snapshotManager] cannot read sidecar ${filePath}: ${err.code}. Treating as empty.`);
+            }
+            return emptyLastImport();
+        }
         throw err;
     }
     try {
