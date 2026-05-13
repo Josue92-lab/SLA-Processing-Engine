@@ -363,7 +363,7 @@ const handlePreview = async (req, res, planCache, snapOpts) => {
             warnings
         });
 
-        // --- Cache for Merge 3 (apply) ---
+        // --- Cache the plan for the apply step ---
         const planId = planCache.put({
             type,
             plan,
@@ -419,7 +419,7 @@ const respondImportError = (res, err, extra = {}) => {
 
 /**
  * sha256 of the settings object. Used as the currentSettingsHash for the
- * staleness guard in Merge 3.
+ * apply-path staleness guard.
  *
  * Canonical form = JSON.stringify with sorted keys at every level. This is
  * NOT a general-purpose deep sort; it is enough for our settings schema,
@@ -439,7 +439,7 @@ const canonicalJson = (v) => {
 
 /**
  * Shape the plan for the preview response. This is the UI-facing contract.
- * Merge 3 will consume the full cached plan internally and does not need
+ * The apply path consumes the full cached plan internally and does not need
  * this shaped version.
  */
 const summarizePlanForResponse = (plan, { planId, type, currentSettingsHash }) => ({
@@ -457,7 +457,7 @@ const summarizePlanForResponse = (plan, { planId, type, currentSettingsHash }) =
 });
 
 // ---------------------------------------------------------------------------
-// Apply pipeline (Merge 3)
+// Apply pipeline
 // ---------------------------------------------------------------------------
 //
 // Contract:
@@ -672,7 +672,7 @@ const respondImportErrorFromApply = (res, err) => {
 };
 
 // ---------------------------------------------------------------------------
-// Snapshots list (Merge 3)
+// Snapshots list
 // ---------------------------------------------------------------------------
 
 const handleListSnapshots = async (req, res, snapOpts) => {
@@ -689,7 +689,7 @@ const handleListSnapshots = async (req, res, snapOpts) => {
 };
 
 // ---------------------------------------------------------------------------
-// Rollback (Merge 3)
+// Rollback
 // ---------------------------------------------------------------------------
 //
 // Contract:

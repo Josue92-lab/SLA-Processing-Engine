@@ -2,8 +2,8 @@
  * Import-layer error taxonomy.
  *
  * All failures inside services/imports/ throw an `ImportError` with a
- * well-known `code` from `ERR`. The HTTP layer (Merge 2+) maps codes
- * to status codes and to user-facing messages.
+ * well-known `code` from `ERR`. The HTTP layer maps codes to status codes
+ * and to user-facing messages.
  *
  * Never throw strings. Never throw plain Error. Downstream consumers
  * (tests, the router) match on `code`, not on `message`.
