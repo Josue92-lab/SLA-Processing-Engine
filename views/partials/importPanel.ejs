@@ -485,7 +485,7 @@
         li.appendChild(lbl);
         appendCount(li, '+', d.add && d.add.length, 'diff-add');
         appendCount(li, '-', d.remove && d.remove.length, 'diff-remove');
-        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        appendUnchanged(li, d.unchanged || 0);
         container.appendChild(li);
     };
 
@@ -500,7 +500,7 @@
         appendCount(li, '+', d.add && d.add.length, 'diff-add');
         appendCount(li, '~', d.changed && d.changed.length, 'diff-change');
         appendCount(li, '-', d.remove && d.remove.length, 'diff-remove');
-        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        appendUnchanged(li, d.unchanged || 0);
         container.appendChild(li);
     };
 
@@ -515,8 +515,14 @@
         appendCount(li, '+', Object.keys(d.add || {}).length, 'diff-add');
         appendCount(li, '~', Object.keys(d.changed || {}).length, 'diff-change');
         appendCount(li, '-', (d.remove || []).length, 'diff-remove');
-        li.appendChild(document.createTextNode('unchanged ' + (d.unchanged || 0)));
+        appendUnchanged(li, d.unchanged || 0);
         container.appendChild(li);
+    };
+
+    const appendUnchanged = (container, n) => {
+        const span = document.createElement('span');
+        span.textContent = 'unchanged ' + n;
+        container.appendChild(span);
     };
 
     const appendCount = (container, sign, n, cls) => {
