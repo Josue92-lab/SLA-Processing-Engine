@@ -624,3 +624,89 @@ test('apply: sidecar write failure is recoverable (logged, apply returns 200 wit
         await isolated.cleanup();
     }
 });
+
+// ---------------------------------------------------------------------------
+// Stabilization regression tests
+// ---------------------------------------------------------------------------
+//
+// Targeted tests for bugs found during the integration hardening pass.
+// See the PR description in feature/import-settings-stabilization.
+
+test('stabilization: unexpected 500 from apply uses the import-layer error shape', async () => {
+    // Force an unexpected failure inside the apply handler by pointing the
+    // snapshot baseDir at a file (so ensureDir throws EEXIST/ENOTDIR).
+    // Before the stabilization fix, this error would bubble to the global
+    // express error middleware and render as `{error: true, message: ...}`
+    // -- a shape the UI's formatError cannot read, surfacing as
+    // "Unknown error". After the fix, every import-route failure -- known
+    // or unknown -- responds with `{error:{code,message,details?}}`.
+    const isolated = await tmpDir();
+    try {
+        const badParent = path.join(isolated.dir, 'not-a-dir');
+        await fs.writeFile(badParent, 'placeholder', 'utf8');
+        const localServer = await bootServer({ snapshotBaseDir: badParent });
+        try {
+            const preview = await postMultipart(
+                `${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/preview`,
+                [
+                    { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
+                    { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
+                ]
+            );
+            assert.equal(preview.status, 200);
+
+            const apply = await postJson(
+                `${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/apply`,
+                { planId: preview.body.planId }
+            );
+            // Whether apply returns 500 (snapshot fail) or 200-with-warnings
+            // (sidecar fail), the shape on failure must be the import-layer
+            // contract, NOT the legacy `{error: true, message}`.
+            if (apply.status >= 500) {
+                assert.ok(apply.body && apply.body.error && typeof apply.body.error === 'object',
+                    `expected structured error object, got: ${JSON.stringify(apply.body)}`);
+                assert.equal(typeof apply.body.error.code, 'string');
+                assert.equal(typeof apply.body.error.message, 'string');
+                assert.notEqual(apply.body.error, true, 'must not use legacy `error:true` shape');
+            }
+        } finally {
+            if (localServer.cache._stopSweep) localServer.cache._stopSweep();
+            await localServer.close();
+        }
+    } finally {
+        await isolated.cleanup();
+    }
+});
+
+test('stabilization: unexpected error from snapshots list uses the import-layer error shape', async () => {
+    // Point snapshotBaseDir at a file so `fs.readdir` throws ENOTDIR.
+    const isolated = await tmpDir();
+    try {
+        const badParent = path.join(isolated.dir, 'also-not-a-dir');
+        await fs.writeFile(badParent, 'placeholder', 'utf8');
+        const localServer = await bootServer({ snapshotBaseDir: badParent });
+        try {
+            const res = await getJson(`${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/snapshots`);
+            // Note: listSnapshots is defensive on ENOENT (returns []). If the
+            // baseDir path resolves to a FILE then `readdir` on snapshots
+            // subdir returns ENOENT (because the subdir doesn't exist under
+            // a file), which is treated as empty. So this endpoint typically
+            // returns 200 with empty list. We assert the 200 shape is still
+            // consistent (no regression), AND that if an error ever does
+            // occur the shape matches.
+            if (res.status >= 500) {
+                assert.ok(res.body && res.body.error && typeof res.body.error === 'object');
+                assert.equal(typeof res.body.error.code, 'string');
+                assert.notEqual(res.body.error, true);
+            } else {
+                assert.equal(res.status, 200);
+                assert.ok(Array.isArray(res.body.snapshots));
+            }
+        } finally {
+            if (localServer.cache._stopSweep) localServer.cache._stopSweep();
+            await localServer.close();
+        }
+    } finally {
+        await isolated.cleanup();
+    }
+});

@@ -146,28 +146,82 @@ export const createImportRouter = ({ planCache = defaultPlanCache, snapshotBaseD
     router.post('/api/settings/:type/import/preview', (req, res, next) => {
         uploadFields(req, res, (uploadErr) => {
             if (uploadErr) return handleUploadError(uploadErr, res);
-            return handlePreview(req, res, planCache, snapOpts).catch(next);
+            return handlePreview(req, res, planCache, snapOpts)
+                .catch((err) => respondUnexpected(res, err, 'preview'));
         });
     });
 
     router.post(
         '/api/settings/:type/import/apply',
         express.json(),
-        (req, res, next) => handleApply(req, res, planCache, snapOpts).catch(next)
+        (req, res) => handleApply(req, res, planCache, snapOpts)
+            .catch((err) => respondUnexpected(res, err, 'apply'))
     );
 
     router.get(
         '/api/settings/:type/import/snapshots',
-        (req, res, next) => handleListSnapshots(req, res, snapOpts).catch(next)
+        (req, res) => handleListSnapshots(req, res, snapOpts)
+            .catch((err) => respondUnexpected(res, err, 'snapshots'))
     );
 
     router.post(
         '/api/settings/:type/import/rollback',
         express.json(),
-        (req, res, next) => handleRollback(req, res, snapOpts).catch(next)
+        (req, res) => handleRollback(req, res, snapOpts)
+            .catch((err) => respondUnexpected(res, err, 'rollback'))
     );
 
     return router;
+};
+
+/**
+ * Stabilization pass (v1): unified 500 responder.
+ *
+ * Before this wrapper existed, unexpected errors (disk-full, EACCES on the
+ * snapshots dir, plain-Error surfaces from pure modules) escaped via
+ * next(err) into middleware/errorHandler.js, which responds with the
+ * legacy shape `{error: true, message: ...}`. That shape does NOT match the
+ * import layer's documented contract `{error: {code, message, details?}}`
+ * and the UI's formatError() could not extract the message -- operator saw
+ * "Unknown error" instead of the real cause.
+ *
+ * We intercept every import-route promise rejection here, log the stack
+ * ONCE with a stable prefix (so operators can grep), and emit the structured
+ * shape that the UI already knows how to render. Express's default 500 is
+ * preserved implicitly (we don't override the global handler).
+ *
+ * ImportError instances should have been handled already by the specific
+ * handler-level responders; if one reaches here, we still render it in the
+ * consistent shape rather than letting it double-respond.
+ */
+const respondUnexpected = (res, err, op) => {
+    if (res.headersSent) {
+        // Response already committed somewhere upstream. Nothing safe to do
+        // other than end the response.
+        try { res.end(); } catch { /* no-op */ }
+        return;
+    }
+    if (err instanceof ImportError) {
+        // Defensive: an ImportError bubbled past the specific responder.
+        // Map its code like apply's error mapper would.
+        console.warn(`[settingsImport] unhandled ImportError in ${op}: code=${err.code} ${err.message}`);
+        const status = err.code === ERR.PLAN_STALE ? 409
+                     : err.code === ERR.SNAPSHOT_NOT_FOUND ? 404
+                     : err.code === ERR.SNAPSHOT_CORRUPT ? 500
+                     : 400;
+        return res.status(status).json({
+            error: { code: err.code, message: err.message, details: err.details }
+        });
+    }
+    console.error(`[settingsImport] unexpected error in ${op}: ${err && err.message}`);
+    if (err && err.stack) console.error(err.stack);
+    return res.status(500).json({
+        error: {
+            code: 'INTERNAL_ERROR',
+            message: 'An unexpected server error occurred. See server logs for details.',
+            details: { op }
+        }
+    });
 };
 
 const notImplemented = (op) => (req, res) => {

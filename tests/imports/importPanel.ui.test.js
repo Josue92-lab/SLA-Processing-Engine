@@ -387,3 +387,121 @@ test('missing files error rendered inline (no fetch call)', async () => {
     assert.equal(err.hidden, false);
     assert.match(err.textContent, /Analyst and VIP/);
 });
+
+
+// ---------------------------------------------------------------------------
+// Stabilization regression tests
+// ---------------------------------------------------------------------------
+//
+// These tests target bugs found during the integration hardening pass.
+// See feature/import-settings-stabilization PR description.
+
+test('stabilization: mode change while preview is in flight discards stale result', async () => {
+    // Stall the preview response so we can flip the mode before it resolves.
+    let resolveFetch;
+    const pending = new Promise((resolve) => { resolveFetch = resolve; });
+
+    const { dom } = await boot({
+        fetchImpl: async (url) => {
+            if (url.includes('/preview'))   return await pending;
+            if (url.includes('/snapshots')) return jsonResp(200, { snapshots: [] });
+            return jsonResp(404, null);
+        }
+    });
+
+    const analyst = dom.document.getElementById('importAnalystFile');
+    const vip     = dom.document.getElementById('importVipFile');
+    analyst.files = [new dom.window.File([new Uint8Array([1])], 'a.xlsx')];
+    vip.files     = [new dom.window.File([new Uint8Array([1])], 'v.xlsx')];
+
+    // Start the preview (don't await).
+    dom.fireEvent(dom.document.getElementById('importForm'), 'submit').catch(() => {});
+    await new Promise(r => setTimeout(r, 10));
+
+    // Mode change mid-flight: flip to internal.
+    const modeSel = dom.document.getElementById('configType');
+    modeSel.value = 'internal';
+    await dom.fireEvent(modeSel, 'change');
+    await dom.flush();
+
+    // Resolve the in-flight preview NOW - it arrived from the external
+    // submission but the user has moved on.
+    resolveFetch(jsonResp(200, PREVIEW_200));
+    await dom.flush();
+    await dom.flush();
+
+    // Preview section must NOT be visible (stale result discarded).
+    const previewSection = dom.document.getElementById('importPreviewSection');
+    assert.equal(previewSection.hidden, true,
+        'preview section should remain hidden after mode change invalidated the in-flight request');
+    // Apply must still be disabled.
+    assert.equal(dom.document.getElementById('importApplyBtn').disabled, true);
+    // Mode label updated.
+    assert.equal(dom.document.getElementById('importMode').textContent, 'internal');
+});
+
+test('stabilization: sidecar-out-of-sync warning is surfaced via alert() before reload', async () => {
+    const alertCalls = [];
+    const { dom } = await boot({
+        fetchImpl: async (url) => {
+            if (url.includes('/preview'))   return jsonResp(200, PREVIEW_200);
+            if (url.includes('/apply'))     return jsonResp(200, {
+                applied: true,
+                snapshotId: 'snap-1',
+                diffSummary: {},
+                warnings: ['sidecar-out-of-sync']
+            });
+            if (url.includes('/snapshots')) return jsonResp(200, { snapshots: [] });
+            return jsonResp(404, null);
+        }
+    });
+
+    // Intercept alert().
+    dom.window.alert = (msg) => { alertCalls.push(msg); };
+
+    // Seed the preview first.
+    const analyst = dom.document.getElementById('importAnalystFile');
+    const vip     = dom.document.getElementById('importVipFile');
+    analyst.files = [new dom.window.File([new Uint8Array([1])], 'a.xlsx')];
+    vip.files     = [new dom.window.File([new Uint8Array([1])], 'v.xlsx')];
+    await dom.fireEvent(dom.document.getElementById('importForm'), 'submit');
+    await dom.flush();
+
+    // Apply.
+    await dom.fireEvent(dom.document.getElementById('importApplyBtn'), 'click');
+    await dom.flush();
+
+    // The alert must have been shown BEFORE reload.
+    assert.equal(alertCalls.length, 1, 'alert() should have been called exactly once');
+    assert.match(alertCalls[0], /sidecar-out-of-sync/);
+    assert.match(alertCalls[0], /Settings are correct on disk/);
+});
+
+test('stabilization: apply without warnings does NOT show an alert', async () => {
+    const alertCalls = [];
+    const { dom } = await boot({
+        fetchImpl: async (url) => {
+            if (url.includes('/preview'))   return jsonResp(200, PREVIEW_200);
+            if (url.includes('/apply'))     return jsonResp(200, {
+                applied: true,
+                snapshotId: 'snap-1',
+                diffSummary: {}
+                // no warnings field
+            });
+            if (url.includes('/snapshots')) return jsonResp(200, { snapshots: [] });
+            return jsonResp(404, null);
+        }
+    });
+    dom.window.alert = (msg) => { alertCalls.push(msg); };
+
+    const analyst = dom.document.getElementById('importAnalystFile');
+    const vip     = dom.document.getElementById('importVipFile');
+    analyst.files = [new dom.window.File([new Uint8Array([1])], 'a.xlsx')];
+    vip.files     = [new dom.window.File([new Uint8Array([1])], 'v.xlsx')];
+    await dom.fireEvent(dom.document.getElementById('importForm'), 'submit');
+    await dom.flush();
+    await dom.fireEvent(dom.document.getElementById('importApplyBtn'), 'click');
+    await dom.flush();
+
+    assert.equal(alertCalls.length, 0, 'clean apply should not surface an alert');
+});

@@ -290,6 +290,13 @@
     // Plan currently staged for apply. Null after reset or after apply.
     let currentPlanId = null;
 
+    // Sequence token to guard against late-resolving preview responses
+    // painting stale results after the operator navigated the UI (mode
+    // change, Cancel, or a second Preview). Incremented on every reset
+    // and every preview submit; the response is discarded if its token is
+    // no longer current by the time fetch resolves.
+    let previewSeq = 0;
+
     // ------------------------------------------------------------------
     // UI helpers
     // ------------------------------------------------------------------
@@ -308,6 +315,7 @@
 
     const resetPreview = () => {
         currentPlanId = null;
+        previewSeq++;  // invalidate any preview response still in flight
         setHidden(previewSection, true);
         setText(previewStatus, '');
         clearError(previewError);
@@ -381,6 +389,12 @@
         fd.append('analystFile', analyst);
         fd.append('vipFile',     vip);
 
+        // Capture the sequence token for THIS submission. resetPreview()
+        // inside this handler already bumped previewSeq; we snapshot its
+        // new value so we can detect a subsequent reset/mode-change while
+        // our fetch is in flight.
+        const mySeq = previewSeq;
+
         setBusy(previewBtn, true);
         setText(previewStatus, 'Previewing...');
 
@@ -388,6 +402,12 @@
             '/api/settings/' + encodeURIComponent(mode) + '/import/preview',
             { method: 'POST', body: fd }
         );
+
+        // Guard: if another reset has happened (mode change, Cancel, or a
+        // second Preview click fired before we resolved), drop this result.
+        if (mySeq !== previewSeq) {
+            return;
+        }
 
         setBusy(previewBtn, false);
         setText(previewStatus, '');
@@ -532,6 +552,21 @@
         setText(applyStatus, '');
 
         if (status === 200 && body && body.applied) {
+            // Apply succeeded. If the server flagged a recoverable condition
+            // (currently only 'sidecar-out-of-sync' after a sidecar write
+            // failure), surface it to the operator BEFORE the page reload
+            // so the message is not silently swallowed. The settings file
+            // is correct either way; the warning is informational.
+            if (Array.isArray(body.warnings) && body.warnings.length) {
+                try {
+                    window.alert(
+                        'Import applied successfully, with warnings:\n\n' +
+                        body.warnings.join('\n') +
+                        '\n\nSettings are correct on disk. The next preview may re-propose ' +
+                        'imported entries as new; re-running import will heal the sidecar.'
+                    );
+                } catch { /* alert unavailable: already logged via aria-live below */ }
+            }
             // Clear preview state, refresh snapshots, reload the page so the
             // existing CRUD lists below also reflect the new state.
             resetPreview();
