@@ -66,7 +66,7 @@ export const normalizeRow = (rawRow, source, deps = {}) => {
     const isActive =
         activeRaw === '1' &&
         statusRaw.toUpperCase() === 'ENABLED' &&
-        gamaStatusRaw === 'Enabled';
+        gamaStatusRaw.toUpperCase() === 'ENABLED';
 
     if (!isActive) {
         return { record: null, skipped: 'inactive', warnings: [] };
