@@ -64,7 +64,7 @@ export const normalizeRow = (rawRow, source, deps = {}) => {
     const gamaStatusRaw = String(rawRow['Gama User Status']  ?? '').trim();
 
     const isActive =
-        activeRaw === '1' &&
+        (activeRaw === '1' || activeRaw === true || activeRaw === 'true') &&
         statusRaw.toUpperCase() === 'ENABLED' &&
         gamaStatusRaw.toUpperCase() === 'ENABLED';
 
