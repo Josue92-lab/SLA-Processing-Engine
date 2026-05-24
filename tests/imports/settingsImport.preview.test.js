@@ -388,3 +388,185 @@ test('preview does NOT write to config/projectSettings_*.json', async () => {
         assert.equal(beforeStat, afterStat, 'settings file existence changed during preview');
     }
 });
+
+// ---------------------------------------------------------------------------
+// Identity-participation feature gate (D-B option A)
+//
+// SLA_INCLUDE_INACTIVE_IDENTITIES=true causes inactive rows with
+// extractable identity to flow into excludedEmails / TZ / country /
+// vipUsers. Default OFF preserves PR #23 baseline.
+//
+// The shared analyst fixture has one inactive EXE row (`inactive@x.com`,
+// TZ=America/Buenos_Aires, country=BR, defaulted by row()). With the
+// flag ON in external mode, that identity participates as a non-excluded
+// EXE (no entry in excludedEmails) but DOES contribute TZ + country.
+// In internal mode the same EXE identity contributes to excludedEmails.
+// ---------------------------------------------------------------------------
+
+const withFlag = async (value, fn) => {
+    const prev = process.env.SLA_INCLUDE_INACTIVE_IDENTITIES;
+    if (value === undefined) delete process.env.SLA_INCLUDE_INACTIVE_IDENTITIES;
+    else process.env.SLA_INCLUDE_INACTIVE_IDENTITIES = value;
+    try {
+        return await fn();
+    } finally {
+        if (prev === undefined) delete process.env.SLA_INCLUDE_INACTIVE_IDENTITIES;
+        else process.env.SLA_INCLUDE_INACTIVE_IDENTITIES = prev;
+    }
+};
+
+test('flag OFF (default): inactive identity does NOT flow into imported settings', async () => {
+    await withFlag(undefined, async () => {
+        const res = await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
+            { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
+            { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
+        ]);
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        // counts.kept and dropped.inactive: unchanged from PR #23 baseline.
+        assert.equal(res.body.counts.analyst.kept, 2);
+        assert.equal(res.body.counts.analyst.dropped.inactive, 1);
+        // Inactive identity: absent from all four imported fields.
+        assert.ok(!res.body.imported.emailTimeZoneMappings['inactive@x.com'],
+            'flag OFF: inactive email should NOT have a TZ mapping');
+        const countryEmails = res.body.imported.emailCountries.map(c => c.Email);
+        assert.ok(!countryEmails.includes('inactive@x.com'),
+            'flag OFF: inactive email should NOT have a country mapping');
+    });
+});
+
+test('flag ON: inactive EXE identity participates in TZ + country (external mode)', async () => {
+    await withFlag('true', async () => {
+        const res = await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
+            { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
+            { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
+        ]);
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+
+        // Eligibility counters unchanged: inactive does NOT enter `kept`.
+        assert.equal(res.body.counts.analyst.kept, 2);
+        assert.equal(res.body.counts.analyst.dropped.inactive, 1);
+
+        // Identity participation: TZ + country are now present.
+        assert.equal(
+            res.body.imported.emailTimeZoneMappings['inactive@x.com'],
+            'America/Buenos_Aires'
+        );
+        const countryEntry = res.body.imported.emailCountries.find(c => c.Email === 'inactive@x.com');
+        assert.ok(countryEntry, 'flag ON: inactive email should appear in emailCountries');
+        assert.equal(countryEntry.Country, 'BR');
+
+        // External mode + EXE userType: inactive does NOT contribute to
+        // excludedEmails (external excludes OSE only). Sanity check that
+        // the rest of the population is unchanged.
+        assert.deepEqual(
+            res.body.imported.excludedEmails.sort(),
+            ['vip1@x.com', 'vip2@x.com']
+        );
+    });
+});
+
+test('flag ON: inactive EXE identity participates in excludedEmails (internal mode)', async () => {
+    await withFlag('true', async () => {
+        const res = await postMultipart(`${server.baseUrl}/api/settings/internal/import/preview`, [
+            { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
+            { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
+        ]);
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+
+        // Internal mode excludes EXE. With flag ON, the inactive EXE row
+        // joins ext1 + ext2 in excludedEmails so its pre-deactivation
+        // tickets are correctly excluded from internal SLA metrics.
+        assert.deepEqual(
+            res.body.imported.excludedEmails.sort(),
+            ['ext1@x.com', 'ext2@x.com', 'inactive@x.com']
+        );
+        // Eligibility counters unchanged.
+        assert.equal(res.body.counts.analyst.kept, 2);
+        assert.equal(res.body.counts.analyst.dropped.inactive, 1);
+    });
+});
+
+test('flag ON: inactive VIP identity participates in vipUsers', async () => {
+    const { dir, cleanup } = await tmpDir();
+    try {
+        const a = path.join(dir, 'a.xlsx');
+        const v = path.join(dir, 'v.xlsx');
+        // Analyst: at least one EXE row so the file-swap heuristic is happy.
+        await writeXlsx(a, REQUIRED_HEADERS, [
+            row({ Email: 'ext1@x.com', 'User type': 'EXE' })
+        ]);
+        // VIP: one active OSE + one inactive OSE.
+        await writeXlsx(v, REQUIRED_HEADERS, [
+            row({ Email: 'vip1@x.com',         Name: 'VIP One',         'User type': 'OSE' }),
+            row({ Email: 'vip-inactive@x.com', Name: 'VIP Inactive',    'User type': 'OSE', Active: '0' })
+        ]);
+
+        await withFlag('true', async () => {
+            const res = await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
+                { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(a) },
+                { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(v) }
+            ]);
+            assert.equal(res.status, 200, JSON.stringify(res.body));
+
+            // counts.vip.kept reflects ELIGIBILITY (active VIP rows only).
+            assert.equal(res.body.counts.vip.kept, 1);
+            assert.equal(res.body.counts.vip.dropped.inactive, 1);
+
+            // PARTICIPATION: vipUsers includes the inactive VIP's name so
+            // their pre-deactivation tickets still match the VIP overlay
+            // in subsequent SLA reports.
+            const vipNames = res.body.imported.vipUsers.map(v => v.name).sort();
+            assert.deepEqual(vipNames, ['VIP Inactive', 'VIP One']);
+
+            // External mode + OSE userType: both VIPs in excludedEmails too.
+            assert.deepEqual(
+                res.body.imported.excludedEmails.sort(),
+                ['vip-inactive@x.com', 'vip1@x.com']
+            );
+        });
+    } finally {
+        await cleanup();
+    }
+});
+
+test('flag ON: inactive row with unrecoverable identity stays fully filtered', async () => {
+    const { dir, cleanup } = await tmpDir();
+    try {
+        const a = path.join(dir, 'a.xlsx');
+        // Analyst includes an inactive row with an INVALID userType: not
+        // structurally extractable, so even with the flag ON it must
+        // remain fully filtered (no participation, no leak).
+        await writeXlsx(a, REQUIRED_HEADERS, [
+            row({ Email: 'ext1@x.com',          'User type': 'EXE' }),
+            row({ Email: 'broken@x.com',        'User type': 'OSE',
+                  Active: '0', Name: 'Broken Inactive' }),
+            row({ Email: 'unrecoverable@x.com', 'User type': 'NOPE',
+                  Active: '0', Name: 'No userType' })
+        ]);
+
+        await withFlag('true', async () => {
+            const res = await postMultipart(`${server.baseUrl}/api/settings/internal/import/preview`, [
+                { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(a) },
+                { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
+            ]);
+            assert.equal(res.status, 200, JSON.stringify(res.body));
+
+            // broken@x.com (OSE, inactive but recoverable) participates -
+            // in internal mode with userType=OSE it does NOT enter
+            // excludedEmails (internal excludes EXE), but its TZ/country
+            // do propagate.
+            assert.equal(
+                res.body.imported.emailTimeZoneMappings['broken@x.com'],
+                'America/Buenos_Aires'
+            );
+            // unrecoverable@x.com is structurally invalid: tier-3 grade.
+            // Must NOT appear in any imported field even with the flag on.
+            assert.ok(!res.body.imported.emailTimeZoneMappings['unrecoverable@x.com']);
+            const allCountryEmails = res.body.imported.emailCountries.map(c => c.Email);
+            assert.ok(!allCountryEmails.includes('unrecoverable@x.com'));
+            assert.ok(!res.body.imported.excludedEmails.includes('unrecoverable@x.com'));
+        });
+    } finally {
+        await cleanup();
+    }
+});

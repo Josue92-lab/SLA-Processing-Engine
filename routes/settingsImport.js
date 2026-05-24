@@ -307,9 +307,44 @@ const handlePreview = async (req, res, planCache, snapOpts) => {
         const analystNorm = normalizeAll(analystRaw, 'analyst');
         const vipNorm     = normalizeAll(vipRaw,     'vip');
 
+        // Feature gate: SLA_INCLUDE_INACTIVE_IDENTITIES
+        //
+        // Default OFF -> behavior is bit-for-bit identical to PR #23
+        // (audit-trail-only). Inactive rows are dropped, settings derive
+        // from active records only, dashboard math unchanged.
+        //
+        // ON -> inactive rows still do NOT produce kept records (counts.kept
+        // and dropped.inactive are unchanged), but their identity flows
+        // into the downstream pipeline so excludedEmails / TZ / country /
+        // vipUsers cover pre-deactivation tickets that still appear in the
+        // SLA report period. The planner is unmodified - it sees a slightly
+        // larger array of records that all look identical in shape.
+        //
+        // The flag is read per-request (not at module load) so operators
+        // can toggle it without restarting the server. Removable in one
+        // place once the new behavior is accepted.
+        const includeInactiveIdentities =
+            process.env.SLA_INCLUDE_INACTIVE_IDENTITIES === 'true';
+        const analystForPipeline = includeInactiveIdentities
+            ? [...analystNorm.records, ...analystNorm.inactiveRecords]
+            : analystNorm.records;
+        const vipForPipeline = includeInactiveIdentities
+            ? [...vipNorm.records, ...vipNorm.inactiveRecords]
+            : vipNorm.records;
+
+        if (includeInactiveIdentities &&
+            (analystNorm.inactiveRecords.length > 0 || vipNorm.inactiveRecords.length > 0)) {
+            console.log(
+                `[settingsImport] preview type=${type} ` +
+                `SLA_INCLUDE_INACTIVE_IDENTITIES=on ` +
+                `participatingInactive analyst=${analystNorm.inactiveRecords.length} ` +
+                `vip=${vipNorm.inactiveRecords.length}`
+            );
+        }
+
         // Intra-file dedup (first-write-wins on email).
-        const { unique: analystUnique, warnings: analystDupWarns } = deduplicateByEmail(analystNorm.records, 'analyst');
-        const { unique: vipUnique,     warnings: vipDupWarns     } = deduplicateByEmail(vipNorm.records,     'vip');
+        const { unique: analystUnique, warnings: analystDupWarns } = deduplicateByEmail(analystForPipeline, 'analyst');
+        const { unique: vipUnique,     warnings: vipDupWarns     } = deduplicateByEmail(vipForPipeline,     'vip');
 
         // --- Cross-file validation (tier 1 hard errors + tier 3 warnings) ---
         const cross = validateCrossFile(analystUnique, vipUnique);
