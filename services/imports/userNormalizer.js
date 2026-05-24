@@ -5,8 +5,11 @@
  * `excelImportParser.parseWorkbook`) and decide whether it should be kept.
  *
  * Three outcomes per row:
- *   1. TIER 2 filter: inactive users are dropped silently. Only the
- *      aggregate counter increments (for the import report).
+ *   1. TIER 2 filter: inactive users are dropped from settings. Both
+ *      the aggregate counter and a per-row audit warning are emitted
+ *      so operators can see which identities were filtered and why
+ *      (mitigates the silent-drop defect class without changing what
+ *      ends up in settings).
  *   2. TIER 3 drop: malformed rows (empty email, invalid userType) are
  *      dropped with a warning attached.
  *   3. KEPT: a typed NormalizedUser record is returned. Sub-issues like
@@ -69,7 +72,23 @@ export const normalizeRow = (rawRow, source, deps = {}) => {
         gamaStatusRaw.toUpperCase() === 'ENABLED';
 
     if (!isActive) {
-        return { record: null, skipped: 'inactive', warnings: [] };
+        // Tier-2 still drops the row from the kept-records set (no record
+        // returned, skipped='inactive'). The drop is no longer silent: a
+        // per-row audit warning is emitted so operators can identify
+        // exactly which rows were filtered and which gate value(s)
+        // triggered it. Behavior of all four imported settings fields
+        // (excludedEmails, vipUsers, emailTimeZoneMappings, emailCountries)
+        // is unchanged - this is purely additive observability.
+        const emailHint = String(rawRow['Email'] ?? '').trim() || '(missing)';
+        const nameHint  = String(rawRow['Name']  ?? '').trim() || '(missing)';
+        return {
+            record: null,
+            skipped: 'inactive',
+            warnings: [
+                `Row dropped (inactive): email=${emailHint}, name="${nameHint}", source=${source} ` +
+                `[Active="${activeRaw}", Status="${statusRaw}", Gama User Status="${gamaStatusRaw}"]`
+            ]
+        };
     }
 
     // --- Tier 3: drop-with-warning filters ---
