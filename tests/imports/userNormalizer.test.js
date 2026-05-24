@@ -23,11 +23,17 @@ test('keeps a fully-valid active row', () => {
     assert.equal(out.warnings.length, 0);
 });
 
-test('tier-2 filter: Active != 1 is silently dropped', () => {
+test('tier-2 filter: Active != 1 is dropped with audit warning', () => {
     const out = normalizeRow(row({ Active: '0' }), 'analyst');
     assert.equal(out.skipped, 'inactive');
     assert.equal(out.record, null);
-    assert.equal(out.warnings.length, 0);
+    // Audit-trail contract: tier-2 drop is no longer silent. The warning
+    // must identify the row and which gate value triggered the drop.
+    assert.equal(out.warnings.length, 1);
+    assert.match(out.warnings[0], /Row dropped \(inactive\)/);
+    assert.match(out.warnings[0], /email=test\.user@example\.com/);
+    assert.match(out.warnings[0], /source=analyst/);
+    assert.match(out.warnings[0], /Active="0"/);
 });
 
 test('tier-2 filter: Status != ENABLED is silently dropped', () => {
