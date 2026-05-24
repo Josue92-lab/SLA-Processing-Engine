@@ -346,6 +346,20 @@ const handlePreview = async (req, res, planCache, snapOpts) => {
         const { unique: analystUnique, warnings: analystDupWarns } = deduplicateByEmail(analystForPipeline, 'analyst');
         const { unique: vipUnique,     warnings: vipDupWarns     } = deduplicateByEmail(vipForPipeline,     'vip');
 
+        // counts.kept reflects RECORD ELIGIBILITY (active rows), not identity
+        // participation. When the flag is OFF, analystUnique IS the active-only
+        // dedup so its length is the correct answer. When the flag is ON,
+        // analystUnique is the merged-with-inactive dedup; we must compute the
+        // active-only dedup separately so the operator-facing kept counter
+        // stays invariant to the flag. Warnings from this auxiliary dedup are
+        // discarded - the merged dedup above already emitted them.
+        const analystKept = includeInactiveIdentities
+            ? deduplicateByEmail(analystNorm.records, 'analyst').unique.length
+            : analystUnique.length;
+        const vipKept = includeInactiveIdentities
+            ? deduplicateByEmail(vipNorm.records, 'vip').unique.length
+            : vipUnique.length;
+
         // --- Cross-file validation (tier 1 hard errors + tier 3 warnings) ---
         const cross = validateCrossFile(analystUnique, vipUnique);
         if (cross.errors.length > 0) {
@@ -363,12 +377,12 @@ const handlePreview = async (req, res, planCache, snapOpts) => {
         const counts = {
             analyst: {
                 parsed:  analystRaw.length,
-                kept:    analystUnique.length,
+                kept:    analystKept,
                 dropped: analystNorm.dropped
             },
             vip: {
                 parsed:  vipRaw.length,
-                kept:    vipUnique.length,
+                kept:    vipKept,
                 dropped: vipNorm.dropped
             }
         };
