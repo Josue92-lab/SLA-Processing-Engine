@@ -1,24 +1,6 @@
 /**
  * Import planner - composes parsed+normalized records into an ImportPlan.
  *
- * Pipeline position:
- *
- *   parseWorkbook  -> normalizeAll  -> validateCrossFile
- *                                                        \
- *                                                         -> importPlanner.build
- *                                                        /
- *                   currentSettings + lastImport sidecar
- *
- * Responsibilities:
- *   1. Derive `imported.*` from the normalized records, using mode + rule #4
- *      (EXE/OSE -> excludedEmails) and cross-file VIP precedence.
- *   2. Simulate the applier to compute `nextSettings` for hashing and diff.
- *   3. Build a human-readable diff per field: add / remove / changed / unchanged.
- *   4. Roll up row counts and warnings.
- *   5. Compute sanity flags for the UI (largeShrink / largeChurn).
- *
- * NO I/O, NO randomness, NO wall-clock reads unless the caller injects them.
- * The `planId` is produced by the HTTP layer, not here.
  */
 
 import { ImportError, ERR } from './errors.js';
@@ -26,6 +8,7 @@ import { apply as applierApply } from './importApplier.js';
 
 /**
  * @typedef {'external'|'internal'} Mode
+ *
  */
 
 const VALID_MODES = new Set(['external', 'internal']);
@@ -40,6 +23,7 @@ const VALID_MODES = new Set(['external', 'internal']);
  * @param {object} [args.counts] - { analyst: {parsed, kept, dropped}, vip: {...} }
  * @param {string[]} [args.warnings] - extra warnings from earlier stages
  * @returns {object} ImportPlan
+ *
  */
 export const build = ({
     currentSettings,
@@ -57,8 +41,6 @@ export const build = ({
     const imported = deriveImported(analyst, vip, mode);
 
     // Simulate the applier to compute the "next" shape deterministically.
-    // We pass a fixed `now` so the planner stays pure — the real apply at
-    // write time will record the real timestamp.
     const { nextSettings } = applierApply(currentSettings, imported, lastImport, {
         mode,
         now: () => '1970-01-01T00:00:00.000Z'
@@ -75,42 +57,44 @@ export const build = ({
         diff,
         warnings,
         sanityFlags,
-        // not included: planId (HTTP layer), currentSettingsHash (HTTP layer)
     };
 };
 
 // ---------------------------------------------------------------------------
-// Deriving the `imported` section
+// Deriving the `imported` section (REFACTORED)
 // ---------------------------------------------------------------------------
-//
-// Source ownership (strict — do NOT mix sources):
-//   - Analyst file  -> excludedEmails, emailTimeZoneMappings, emailCountries
-//   - VIP file      -> vipUsers ONLY
-//
-// VIP rows MUST NOT participate in TZ / country / excludedEmails derivation.
-// The VIP file is purely a name overlay used to flag tickets for VIP SLA
-// thresholds at runtime. The analyst file is the canonical population for
-// role routing (EXE/OSE) and identity attributes (TZ, country).
 
 const deriveImported = (analyst, vip, mode) => {
-    // excludedEmails: derived from the ANALYST file only, partitioned by
-    // userType. external mode excludes OSE emails (internal users), internal
-    // mode excludes EXE emails (external users). VIP file does not contribute.
-    const exeEmails = unique(analyst.filter(r => r.userType === 'EXE').map(r => r.email));
-    const oseEmails = unique(analyst.filter(r => r.userType === 'OSE').map(r => r.email));
-    const excludedEmails = mode === 'external' ? oseEmails : exeEmails;
+    let targetAnalysts = [];
+    let excludedAnalysts = [];
 
-    // emailTimeZoneMappings + emailCountries: derived from the ANALYST file
-    // only. VIP rows do not contribute identity attributes - the VIP file
-    // is overlay-only (vipUsers).
+    // Separación estricta por tipo de configuración (External vs Internal)
+    // Las filas VIP nunca participan ni se mezclan en esta clasificación.
+    if (mode === 'external') {
+        targetAnalysts = analyst.filter(r => r.userType === 'EXE');   // External members
+        excludedAnalysts = analyst.filter(r => r.userType === 'OSE'); // Internal members
+    } else if (mode === 'internal') {
+        targetAnalysts = analyst.filter(r => r.userType === 'OSE');   // Internal members
+        excludedAnalysts = analyst.filter(r => r.userType === 'EXE'); // External members
+    }
+
+    // Extraer emails únicos para exclusión
+    const excludedEmails = unique(excludedAnalysts.map(r => r.email));
+
+    // Mapeos de Zona Horaria y Países basados estrictamente en el grupo objetivo
+    const byEmail = new Map();
+    for (const r of targetAnalysts) {
+        byEmail.set(r.email, r);
+    }
+
     const emailTimeZoneMappings = {};
     const emailCountries = [];
-    for (const r of analyst) {
+    for (const r of byEmail.values()) {
         if (r.tz)      emailTimeZoneMappings[r.email] = r.tz;
         if (r.country) emailCountries.push({ Email: r.email, Country: r.country });
     }
 
-    // vipUsers: distinct names from the VIP file ONLY.
+    // vipUsers: Poblado única y exclusivamente por el archivo VIP sin clasificar por tipo
     const vipNames = unique(vip.map(r => r.name).filter(n => n && n.length > 0));
     const vipUsers = vipNames.map(name => ({ name }));
 
@@ -123,18 +107,8 @@ const deriveImported = (analyst, vip, mode) => {
 };
 
 // ---------------------------------------------------------------------------
-// Diff computation
+// Diff computation & Utilities remain the same
 // ---------------------------------------------------------------------------
-
-/**
- * Per-field diff. `add`/`remove`/`changed` are the USER-VISIBLE deltas between
- * the current settings and what WILL be on disk after apply.
- *
- * We do NOT derive the diff from previousImp/newImp directly. We derive it
- * from current vs next, which is what the operator actually sees change.
- * This correctly handles manual entries that happen to coincide with newImp
- * (they count as "unchanged", not "changed").
- */
 const buildDiff = (current, next, previousImp, newImp) => {
     return {
         excludedEmails:        diffStringList(current.excludedEmails || [], next.excludedEmails || []),
@@ -173,7 +147,7 @@ const diffObjectList = (current, next, keyField, compareFields) => {
     const add = [];
     const remove = [];
     const changed = [];
-    let unchanged = curKeyless; // keyless entries are, by definition, unchanged
+    let unchanged = curKeyless;
 
     for (const [k, nxtE] of nxtByKey) {
         const curE = curByKey.get(k);
@@ -189,7 +163,6 @@ const diffObjectList = (current, next, keyField, compareFields) => {
         if (!nxtByKey.has(k)) remove.push(curE);
     }
 
-    // Stable ordering for UI review.
     const cmp = (a, b) => String(a[keyField]).localeCompare(String(b[keyField]));
     add.sort(cmp);
     remove.sort(cmp);
@@ -213,10 +186,6 @@ const diffMap = (current, next) => {
     }
     return { add, changed, remove: remove.sort(), unchanged };
 };
-
-// ---------------------------------------------------------------------------
-// Sanity flags
-// ---------------------------------------------------------------------------
 
 const computeSanityFlags = (current, next) => {
     const sizeCurr = {
@@ -256,10 +225,6 @@ const computeSanityFlags = (current, next) => {
 
     return { largeShrink, largeChurn };
 };
-
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
 
 const unique = (xs) => Array.from(new Set(xs));
 
