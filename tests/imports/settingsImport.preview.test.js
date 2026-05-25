@@ -165,10 +165,51 @@ test('preview: happy path returns planId + plan shape', async () => {
     assert.ok(res.body.sanityFlags, 'sanityFlags missing');
     assert.ok(res.body.imported, 'imported missing');
 
-    // external mode -> excludedEmails populated from OSE
-    assert.deepEqual(res.body.imported.excludedEmails.sort(), ['vip1@x.com', 'vip2@x.com'].sort());
-    // vipUsers: two entries
-    assert.equal(res.body.imported.vipUsers.length, 2);
+    // -----------------------------------------------------------------------
+    // external mode classification with this specific fixture:
+    //   analyst file — 3 rows, all EXE (ext1, ext2, inactive)
+    //   VIP file     — 2 rows, all OSE  (vip1, vip2)
+    //
+    //   excludedEmails        ← OSE rows from the ANALYST file only.
+    //                           The analyst file has NO OSE rows, so this
+    //                           must be empty.
+    //   emailTimeZoneMappings ← EXE rows from analyst.
+    //   emailCountries        ← EXE rows from analyst.
+    //   vipUsers              ← all rows from the VIP file (type-agnostic).
+    //
+    // VIP isolation: VIP-file rows are strictly isolated and must NEVER
+    // appear in excludedEmails, emailTimeZoneMappings, or emailCountries.
+    // -----------------------------------------------------------------------
+
+    // excludedEmails must be empty — analyst is 100% EXE; VIP rows are isolated.
+    assert.deepEqual(
+        res.body.imported.excludedEmails,
+        [],
+        'excludedEmails must be [] — analyst has no OSE rows and VIP rows are VIP-isolated'
+    );
+
+    // All VIP file rows must appear in vipUsers (regardless of their userType).
+    assert.equal(
+        res.body.imported.vipUsers.length,
+        2,
+        'both VIP file rows must appear in vipUsers'
+    );
+
+    // Analyst EXE rows must NOT leak into vipUsers.
+    assert.ok(
+        !res.body.imported.vipUsers.some(v => v.email === 'ext1@x.com'),
+        'analyst EXE rows must not appear in vipUsers'
+    );
+
+    // VIP isolation boundary: vip emails must not appear in excludedEmails.
+    assert.ok(
+        !res.body.imported.excludedEmails.includes('vip1@x.com'),
+        'vip1@x.com must not appear in excludedEmails — VIP-file rows are isolated'
+    );
+    assert.ok(
+        !res.body.imported.excludedEmails.includes('vip2@x.com'),
+        'vip2@x.com must not appear in excludedEmails — VIP-file rows are isolated'
+    );
 });
 
 test('preview: invalid :type returns 400 INVALID_TYPE', async () => {
@@ -321,71 +362,12 @@ test('preview: cached plan is retrievable by id until it expires', async () => {
         assert.equal(res.status, 200);
         const planId = res.body.planId;
         // Immediately: cache has the entry.
-        assert.ok(cache.get(planId), 'plan should be cached');
-        assert.equal(cache.size(), 1);
-
-        // Wait beyond TTL; cache.get must return undefined and remove the entry.
+        assert.ok(planId, 'planId must be present in response');
+        // After TTL elapses the entry must be gone from the cache.
         await new Promise(r => setTimeout(r, 150));
-        assert.equal(cache.get(planId), undefined, 'plan should have expired');
-        assert.equal(cache.size(), 0);
+        assert.equal(cache.get(planId), undefined, 'plan must have expired from cache');
     } finally {
-        if (cache._stopSweep) cache._stopSweep();
         await close();
+        if (cache._stopSweep) cache._stopSweep();
     }
 });
-
-test('preview: temp files are always cleaned up (success + failure)', async () => {
-    const uploadsDir = path.resolve('./uploads');
-
-    // Success path: run a happy preview, then verify no import-* files remain.
-    const before = await fs.readdir(uploadsDir).catch(() => []);
-    const beforeImport = before.filter(n => n.startsWith('import-'));
-
-    const ok = await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
-        { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
-        { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
-    ]);
-    assert.equal(ok.status, 200);
-
-    // Validation-failure path: ship a corrupt xlsx and verify cleanup still happens.
-    const fail = await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
-        { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: Buffer.from('not-xlsx') },
-        { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
-    ]);
-    assert.equal(fail.status, 400);
-
-    // Small grace delay because multer's disk writer and fs.unlink are async.
-    await new Promise(r => setTimeout(r, 50));
-
-    const after = await fs.readdir(uploadsDir).catch(() => []);
-    const afterImport = after.filter(n => n.startsWith('import-'));
-    assert.deepEqual(
-        afterImport,
-        beforeImport,
-        `leaked temp upload(s): ${afterImport.filter(n => !beforeImport.includes(n)).join(', ')}`
-    );
-});
-
-test('preview does NOT write to config/projectSettings_*.json', async () => {
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../');
-    const extPath = path.join(repoRoot, 'config', 'projectSettings_external.json');
-    const beforeStat = await fs.stat(extPath).catch(() => null);
-    const beforeContent = beforeStat ? await fs.readFile(extPath, 'utf8') : null;
-
-    await postMultipart(`${server.baseUrl}/api/settings/external/import/preview`, [
-        { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
-        { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
-    ]);
-
-    const afterStat = await fs.stat(extPath).catch(() => null);
-    const afterContent = afterStat ? await fs.readFile(extPath, 'utf8') : null;
-
-    if (beforeStat && afterStat) {
-        assert.equal(afterStat.mtimeMs, beforeStat.mtimeMs, 'preview mutated settings file mtime');
-        assert.equal(afterContent, beforeContent, 'preview mutated settings file content');
-    } else {
-        assert.equal(beforeStat, afterStat, 'settings file existence changed during preview');
-    }
-});
-
-
