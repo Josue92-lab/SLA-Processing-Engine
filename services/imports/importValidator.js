@@ -74,35 +74,12 @@ export const validateCrossFile = (analyst, vip) => {
         ));
     }
 
-    // --- Cross-file soft warnings: same email, different TZ / country ---
-    // Precedence (decision #2): VIP wins. We emit a warning per collision.
-    const byEmail = new Map();
-    const register = (r) => {
-        const existing = byEmail.get(r.email);
-        if (!existing) {
-            byEmail.set(r.email, r);
-            return;
-        }
-        // Cross-file only: same email but different source.
-        if (existing.source !== r.source) {
-            if ((existing.tz || null) !== (r.tz || null) && existing.tz && r.tz) {
-                warnings.push(
-                    `Email ${r.email} has different Time zone in analyst (${existing.tz}) ` +
-                    `and VIP (${r.tz}) files; VIP value kept.`
-                );
-            }
-            if ((existing.country || null) !== (r.country || null) && existing.country && r.country) {
-                warnings.push(
-                    `Email ${r.email} has different Country in analyst (${existing.country}) ` +
-                    `and VIP (${r.country}) files; VIP value kept.`
-                );
-            }
-            // Canonicalize: keep whichever is vip.
-            if (r.source === 'vip') byEmail.set(r.email, r);
-        }
-    };
-    analyst.forEach(register);
-    vip.forEach(register);
+    // NOTE: cross-file TZ / country divergence is intentionally NOT warned
+    // about here. Source ownership is strict:
+    //   - analyst file owns excludedEmails / emailTimeZoneMappings / emailCountries
+    //   - vip file owns vipUsers ONLY
+    // VIP rows' TZ and country are unused, so a mismatch with analyst is
+    // not a meaningful signal and would only add noise.
 
     return { errors, warnings };
 };

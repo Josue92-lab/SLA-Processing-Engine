@@ -50,10 +50,8 @@ test('same email EXE+OSE across files triggers CROSS_FILE_USERTYPE_CONFLICT', ()
     assert.deepEqual(errors[0].details.emails, ['same@x.com']);
 });
 
-test('cross-file TZ divergence emits a warning', () => {
-    // Same email appears in both files with same userType, but different TZ.
-    // We use OSE for both (legitimate internal user seen in both feeds)
-    // to avoid tripping the file-swap heuristic in isolation.
+test('cross-file TZ divergence does NOT emit a warning (source ownership: analyst owns TZ)', () => {
+    // VIP TZ is unused, so a mismatch is irrelevant noise.
     const analyst = [
         rec({ email: 'c@x.com', userType: 'OSE', source: 'analyst', tz: 'Europe/Berlin' }),
         rec({ email: 'a2@x.com', userType: 'EXE', source: 'analyst' })  // keeps analyst file mixed
@@ -61,16 +59,18 @@ test('cross-file TZ divergence emits a warning', () => {
     const vip = [rec({ email: 'c@x.com', userType: 'OSE', source: 'vip', tz: 'America/Buenos_Aires' })];
     const { errors, warnings } = validateCrossFile(analyst, vip);
     assert.deepEqual(errors, []);
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /VIP value kept/);
+    assert.deepEqual(warnings, []);
 });
 
-test('cross-file country divergence emits a warning', () => {
-    const analyst = [rec({ email: 'd@x.com', userType: 'OSE', source: 'analyst', country: 'BR' })];
+test('cross-file country divergence does NOT emit a warning (source ownership: analyst owns country)', () => {
+    const analyst = [
+        rec({ email: 'd@x.com', userType: 'OSE', source: 'analyst', country: 'BR' }),
+        rec({ email: 'd2@x.com', userType: 'EXE', source: 'analyst' })  // keeps analyst file mixed
+    ];
     const vip     = [rec({ email: 'd@x.com', userType: 'OSE', source: 'vip',     country: 'AR' })];
-    const { warnings } = validateCrossFile(analyst, vip);
-    assert.equal(warnings.length, 1);
-    assert.match(warnings[0], /different Country/);
+    const { errors, warnings } = validateCrossFile(analyst, vip);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(warnings, []);
 });
 
 test('deduplicateByEmail returns first occurrence, warns on diff', () => {

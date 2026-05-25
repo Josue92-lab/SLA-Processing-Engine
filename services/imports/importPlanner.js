@@ -82,28 +82,35 @@ export const build = ({
 // ---------------------------------------------------------------------------
 // Deriving the `imported` section
 // ---------------------------------------------------------------------------
+//
+// Source ownership (strict — do NOT mix sources):
+//   - Analyst file  -> excludedEmails, emailTimeZoneMappings, emailCountries
+//   - VIP file      -> vipUsers ONLY
+//
+// VIP rows MUST NOT participate in TZ / country / excludedEmails derivation.
+// The VIP file is purely a name overlay used to flag tickets for VIP SLA
+// thresholds at runtime. The analyst file is the canonical population for
+// role routing (EXE/OSE) and identity attributes (TZ, country).
 
 const deriveImported = (analyst, vip, mode) => {
-    const all = [...analyst, ...vip];
-    const exeEmails = unique(all.filter(r => r.userType === 'EXE').map(r => r.email));
-    const oseEmails = unique(all.filter(r => r.userType === 'OSE').map(r => r.email));
-
+    // excludedEmails: derived from the ANALYST file only, partitioned by
+    // userType. external mode excludes OSE emails (internal users), internal
+    // mode excludes EXE emails (external users). VIP file does not contribute.
+    const exeEmails = unique(analyst.filter(r => r.userType === 'EXE').map(r => r.email));
+    const oseEmails = unique(analyst.filter(r => r.userType === 'OSE').map(r => r.email));
     const excludedEmails = mode === 'external' ? oseEmails : exeEmails;
 
-    // Cross-file merge for TZ and country: analyst first, VIP overwrites on
-    // collision. Implementation matches the documented VIP-wins rule.
-    const byEmail = new Map();
-    for (const r of analyst) byEmail.set(r.email, r);
-    for (const r of vip)     byEmail.set(r.email, r);
-
+    // emailTimeZoneMappings + emailCountries: derived from the ANALYST file
+    // only. VIP rows do not contribute identity attributes - the VIP file
+    // is overlay-only (vipUsers).
     const emailTimeZoneMappings = {};
     const emailCountries = [];
-    for (const r of byEmail.values()) {
+    for (const r of analyst) {
         if (r.tz)      emailTimeZoneMappings[r.email] = r.tz;
         if (r.country) emailCountries.push({ Email: r.email, Country: r.country });
     }
 
-    // vipUsers: distinct names from the VIP file.
+    // vipUsers: distinct names from the VIP file ONLY.
     const vipNames = unique(vip.map(r => r.name).filter(n => n && n.length > 0));
     const vipUsers = vipNames.map(name => ({ name }));
 
