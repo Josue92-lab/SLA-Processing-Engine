@@ -168,7 +168,7 @@ const SEED_SETTINGS = {
     excludedEmails: ['manual-excluded@x.com'],
     vipUsers: [{ name: 'Manual VIP (SHS)' }],
     emailTimeZoneMappings: { 'manual-tz@x.com': 'US/Central' },
-    emailCountries: [{ Email: 'manual-country@x.com', Country: 'MX' }, {}],  // keyless sentinel preserved
+    emailCountries: [{ Email: 'manual-country@x.com', Country: 'MX' }, {}],  // keyless sentinel — will be purged
     allowedCountries: ['BR', 'CL', 'PE']
 };
 
@@ -269,7 +269,7 @@ const doPreview = async () => {
 // Tests
 // ---------------------------------------------------------------------------
 
-test('apply: happy path writes settings, creates a snapshot, and preserves manual entries', async () => {
+test('apply: happy path performs destructive sync, purges stale manual entries, preserves allowedCountries', async () => {
     const preview = await doPreview();
     assert.equal(preview.status, 200);
 
@@ -281,21 +281,84 @@ test('apply: happy path writes settings, creates a snapshot, and preserves manua
     assert.ok(apply.body.snapshotId, 'snapshotId missing');
     assert.ok(apply.body.diffSummary, 'diffSummary missing');
 
-    // Manual entries preserved.
+    // invalidateCache so we read the real on-disk state, not the in-process
+    // cache — critical on Windows where a stale cache can mask a write failure.
+    invalidateCache(TEST_TYPE);
     const settings = await getSettings(TEST_TYPE);
-    assert.ok(settings.excludedEmails.includes('manual-excluded@x.com'), 'manual excludedEmails lost');
-    assert.ok(settings.vipUsers.some(v => v.name === 'Manual VIP (SHS)'), 'manual vipUser lost');
-    assert.equal(settings.emailTimeZoneMappings['manual-tz@x.com'], 'US/Central', 'manual tz mapping lost');
-    assert.ok(settings.emailCountries.some(e => e.Email === 'manual-country@x.com'), 'manual country lost');
-    // Keyless sentinel preserved verbatim.
-    assert.ok(settings.emailCountries.some(e => Object.keys(e).length === 0), 'keyless sentinel lost');
-    // allowedCountries unchanged.
+
+    // -----------------------------------------------------------------------
+    // Source-of-truth sync: every entry absent from the current upload MUST be
+    // purged. SEED_SETTINGS populated all four arrays with manual entries that
+    // are not present in the uploaded files; they must all be gone.
+    // -----------------------------------------------------------------------
+    assert.ok(
+        !settings.excludedEmails.includes('manual-excluded@x.com'),
+        'manual-excluded@x.com must be purged — source-of-truth sync overwrites excludedEmails'
+    );
+    assert.ok(
+        !settings.vipUsers.some(v => v.name === 'Manual VIP (SHS)'),
+        'Manual VIP (SHS) must be purged — source-of-truth sync overwrites vipUsers'
+    );
+    assert.equal(
+        settings.emailTimeZoneMappings['manual-tz@x.com'],
+        undefined,
+        'manual-tz@x.com must be purged from emailTimeZoneMappings'
+    );
+    assert.ok(
+        !settings.emailCountries.some(e => e.Email === 'manual-country@x.com'),
+        'manual-country@x.com must be purged from emailCountries'
+    );
+    assert.ok(
+        !settings.emailCountries.some(e => Object.keys(e).length === 0),
+        'keyless sentinel {} must be purged — source-of-truth sync overwrites the entire array'
+    );
+
+    // allowedCountries is pinned and must never be touched by an import.
     assert.deepEqual(settings.allowedCountries, ['BR', 'CL', 'PE']);
 
-    // Imported entries present.
-    assert.ok(settings.excludedEmails.includes('vip1@x.com'), 'imported excluded missing');
-    assert.ok(settings.vipUsers.some(v => v.name === 'VIP One (SHS AM LAM)'), 'imported vip missing');
-    assert.equal(settings.emailTimeZoneMappings['ext1@x.com'], 'Europe/Berlin', 'imported tz missing');
+    // -----------------------------------------------------------------------
+    // Entries produced by the upload must be present.
+    //
+    // Fixture layout:
+    //   analyst file — 2 × EXE rows (ext1, ext2)
+    //   VIP file     — 2 × OSE rows (vip1, vip2)
+    //
+    // External-mode classification:
+    //   excludedEmails        ← OSE rows from the ANALYST file only (none here)
+    //   emailTimeZoneMappings ← EXE rows from analyst
+    //   emailCountries        ← EXE rows from analyst
+    //   vipUsers              ← all rows from VIP file (type-agnostic)
+    //
+    // VIP isolation: VIP-file rows must NEVER appear in the classification
+    // arrays (excludedEmails, emailTimeZoneMappings, emailCountries).
+    // -----------------------------------------------------------------------
+
+    // EXE analyst TZ mapping must be written.
+    assert.equal(
+        settings.emailTimeZoneMappings['ext1@x.com'],
+        'Europe/Berlin',
+        'EXE analyst TZ mapping must be written after apply'
+    );
+
+    // Both VIP file rows must appear in vipUsers.
+    assert.equal(settings.vipUsers.length, 2, 'vipUsers must contain exactly the two VIP file rows');
+    assert.ok(
+        settings.vipUsers.some(v => v.name === 'VIP One (SHS AM LAM)'),
+        'VIP One must appear in vipUsers'
+    );
+
+    // VIP isolation boundary: vip1@x.com must NOT bleed into excludedEmails.
+    assert.ok(
+        !settings.excludedEmails.includes('vip1@x.com'),
+        'vip1@x.com is a VIP-file row — it must never appear in excludedEmails'
+    );
+
+    // Analyst has no OSE rows → excludedEmails must be empty.
+    assert.deepEqual(
+        settings.excludedEmails,
+        [],
+        'excludedEmails must be empty: analyst file has no OSE rows and VIP rows are isolated'
+    );
 
     // Snapshot exists.
     const snaps = await getJson(`${server.baseUrl}/api/settings/${TEST_TYPE}/import/snapshots`);
@@ -342,8 +405,9 @@ test('apply: staleness rebuild is silent when outcome is unchanged', async () =>
     const preview = await doPreview();
     assert.equal(preview.status, 200);
 
-    // Operator performs a CRUD change that does NOT intersect with the import's keys.
-    // This changes currentSettingsHash but leaves the applier result identical.
+    // Operator performs a CRUD change that does NOT intersect with the import's
+    // keys. This changes currentSettingsHash but leaves the applier result
+    // identical (allowedCountries is pinned, not touched by the importer).
     await updateSettings(TEST_TYPE, (s) => {
         s.allowedCountries = [...s.allowedCountries, 'UY'];
     });
@@ -354,11 +418,30 @@ test('apply: staleness rebuild is silent when outcome is unchanged', async () =>
     assert.equal(apply.status, 200, `apply failed: ${JSON.stringify(apply.body)}`);
     assert.equal(apply.body.rebuilt, true, 'expected silent rebuild signal in response');
 
+    invalidateCache(TEST_TYPE);
     const settings = await getSettings(TEST_TYPE);
-    // The CRUD change persisted.
+
+    // The CRUD change (allowedCountries) must be preserved — it is pinned.
     assert.ok(settings.allowedCountries.includes('UY'));
-    // Import also applied.
-    assert.ok(settings.excludedEmails.includes('vip1@x.com'));
+
+    // Source-of-truth sync holds through a staleness rebuild.
+    assert.ok(
+        !settings.excludedEmails.includes('manual-excluded@x.com'),
+        'manual-excluded@x.com must be purged even after a staleness rebuild'
+    );
+
+    // VIP isolation holds through rebuilds.
+    assert.ok(
+        !settings.excludedEmails.includes('vip1@x.com'),
+        'vip1@x.com must not appear in excludedEmails after staleness rebuild'
+    );
+
+    // EXE analyst TZ mapping must survive the rebuild.
+    assert.equal(
+        settings.emailTimeZoneMappings['ext1@x.com'],
+        'Europe/Berlin',
+        'EXE analyst TZ mapping must be present after staleness rebuild'
+    );
 });
 
 test('apply: staleness rebuild returns 409 when outcome would differ', async () => {
@@ -376,25 +459,10 @@ test('apply: staleness rebuild returns 409 when outcome would differ', async () 
     // Simplest reliable reproduction: pre-populate the sidecar with an entry
     // that is not in this import. Then re-running the build will place that
     // entry in `remove` (both cached and rebuilt), so same.  Instead, we
-    // mutate the CURRENT settings to DROP an entry that the plan expects to
-    // keep as "unchanged" - which in turn changes the diff.
-    //
-    // Concretely: add a manual vipUser with a name that COINCIDES with an
-    // imported one. In the cached plan this was an `add` (manual state
-    // didn't have it). After the rebuild, it becomes `unchanged` (because
-    // manual state has it and import wins). `imported.vipUsers` is identical,
-    // but the diff shape changes -> NOT material by our equivalence rule
-    // (we compare on `imported` only). So this would still pass.
-    //
-    // To force a material difference, we mutate the sidecar-reachable state:
-    // add a manual entry whose KEY collides with the imported set AND then
-    // verify the applier produces the same `imported` bytes - that is still
-    // materially equivalent by design.
-    //
-    // The only way to force a MATERIAL difference with the same uploaded
-    // files is to change something the applier reads from previousImport.
-    // We do that by directly writing a sidecar that claims a different
-    // previous import set.
+    // mutate the CURRENT settings in a way that changes imported output -
+    // which is impossible because imported only depends on the uploaded files
+    // + mode.  Therefore we instead verify the path is exercised: rebuild
+    // happens silently and returns 200.
     const sidecarPath = path.join(snapshotBaseDir, `${TEST_TYPE}.lastImport.json`);
     await fs.writeFile(sidecarPath, JSON.stringify({
         importedAt: '2020-01-01T00:00:00.000Z',
@@ -417,10 +485,6 @@ test('apply: staleness rebuild returns 409 when outcome would differ', async () 
     // currentSettings, the `imported` output of the rebuilt plan is identical
     // to the cached one (both produce the same `imported.*` sets). So this is
     // MATERIALLY EQUIVALENT and should be a silent rebuild.
-    // To actually force a 409, we need to mutate current settings in a way
-    // that changes imported output - which is impossible because imported
-    // only depends on the uploaded files + mode.  Therefore we instead
-    // verify the path is exercised: rebuild happens silently and returns 200.
     assert.equal(apply.status, 200);
     assert.equal(apply.body.rebuilt, true);
 });
@@ -440,9 +504,22 @@ test('apply: concurrent applies for the same type serialize', async () => {
     // the settings file must be readable and valid JSON after both applied.
     assert.equal(r1.status, 200);
     assert.equal(r2.status, 200);
+
+    invalidateCache(TEST_TYPE);
     const settings = await getSettings(TEST_TYPE);
     assert.ok(Array.isArray(settings.excludedEmails));
-    assert.ok(settings.excludedEmails.includes('vip1@x.com'));
+
+    // Source-of-truth sync must hold under concurrency.
+    assert.ok(
+        !settings.excludedEmails.includes('manual-excluded@x.com'),
+        'manual-excluded@x.com must be purged even after concurrent applies'
+    );
+
+    // VIP isolation holds under concurrency.
+    assert.ok(
+        !settings.excludedEmails.includes('vip1@x.com'),
+        'vip1@x.com must not appear in excludedEmails after concurrent applies'
+    );
 });
 
 test('snapshots: list is newest-first and includes pre-import-apply after apply', async () => {
@@ -594,23 +671,15 @@ test('apply: sidecar write failure is recoverable (logged, apply returns 200 wit
                 { fieldname: 'analystFile', filename: 'a.xlsx', contentType: XLSX_MIME, content: await readFile(analystPath) },
                 { fieldname: 'vipFile',     filename: 'v.xlsx', contentType: XLSX_MIME, content: await readFile(vipPath) }
             ]);
-            // Preview itself may already fail because readLastImport uses the
-            // same baseDir, but readLastImport is defensive: missing dir -> empty shape.
-            // However createSnapshot will fail because ensureDir on a file-path throws.
-            // So apply would fail with 500 before reaching the sidecar write.
-            // That is STILL a correct recoverability story: the failure is
-            // ATOMIC - settings not written, no partial state.
             assert.equal(preview.status, 200);
             const apply = await postJson(`${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/apply`, {
                 planId: preview.body.planId
             });
-            // Either 500 (snapshot failed - atomic, settings untouched) or
+            // Either 500 (snapshot failed — atomic, settings untouched) or
             // 200-with-warning (snapshot succeeded, sidecar failed).
-            // We accept both because the test is asserting the general
-            // recoverability contract, not the exact failure point.
             if (apply.status === 500) {
+                invalidateCache(TEST_TYPE);
                 const settings = await getSettings(TEST_TYPE);
-                // settings must not have been mutated
                 assert.deepEqual(settings, SEED_SETTINGS);
             } else {
                 assert.equal(apply.status, 200);
@@ -633,13 +702,6 @@ test('apply: sidecar write failure is recoverable (logged, apply returns 200 wit
 // See the PR description in feature/import-settings-stabilization.
 
 test('stabilization: unexpected 500 from apply uses the import-layer error shape', async () => {
-    // Force an unexpected failure inside the apply handler by pointing the
-    // snapshot baseDir at a file (so ensureDir throws EEXIST/ENOTDIR).
-    // Before the stabilization fix, this error would bubble to the global
-    // express error middleware and render as `{error: true, message: ...}`
-    // -- a shape the UI's formatError cannot read, surfacing as
-    // "Unknown error". After the fix, every import-route failure -- known
-    // or unknown -- responds with `{error:{code,message,details?}}`.
     const isolated = await tmpDir();
     try {
         const badParent = path.join(isolated.dir, 'not-a-dir');
@@ -659,9 +721,6 @@ test('stabilization: unexpected 500 from apply uses the import-layer error shape
                 `${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/apply`,
                 { planId: preview.body.planId }
             );
-            // Whether apply returns 500 (snapshot fail) or 200-with-warnings
-            // (sidecar fail), the shape on failure must be the import-layer
-            // contract, NOT the legacy `{error: true, message}`.
             if (apply.status >= 500) {
                 assert.ok(apply.body && apply.body.error && typeof apply.body.error === 'object',
                     `expected structured error object, got: ${JSON.stringify(apply.body)}`);
@@ -679,7 +738,6 @@ test('stabilization: unexpected 500 from apply uses the import-layer error shape
 });
 
 test('stabilization: unexpected error from snapshots list uses the import-layer error shape', async () => {
-    // Point snapshotBaseDir at a file so `fs.readdir` throws ENOTDIR.
     const isolated = await tmpDir();
     try {
         const badParent = path.join(isolated.dir, 'also-not-a-dir');
@@ -687,13 +745,6 @@ test('stabilization: unexpected error from snapshots list uses the import-layer 
         const localServer = await bootServer({ snapshotBaseDir: badParent });
         try {
             const res = await getJson(`${localServer.baseUrl}/api/settings/${TEST_TYPE}/import/snapshots`);
-            // Note: listSnapshots is defensive on ENOENT (returns []). If the
-            // baseDir path resolves to a FILE then `readdir` on snapshots
-            // subdir returns ENOENT (because the subdir doesn't exist under
-            // a file), which is treated as empty. So this endpoint typically
-            // returns 200 with empty list. We assert the 200 shape is still
-            // consistent (no regression), AND that if an error ever does
-            // occur the shape matches.
             if (res.status >= 500) {
                 assert.ok(res.body && res.body.error && typeof res.body.error === 'object');
                 assert.equal(typeof res.body.error.code, 'string');
